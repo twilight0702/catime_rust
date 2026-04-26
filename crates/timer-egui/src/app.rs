@@ -4,15 +4,13 @@ use std::time::{Duration, Instant};
 use egui::{Color32, FontId, RichText};
 use timer_app::AppController;
 use timer_core::{AppCommand, AppEvent::*, TimerStatus};
-use timer_storage::{ConfigRepository, TomlConfigRepository};
 
-/// egui 应用主结构：持有控制器、命令通道和配置仓库。
+/// egui 应用主结构：持有控制器和命令通道。
 /// 每帧从通道中取出命令处理，渲染 UI，并请求每秒重绘。
 pub struct CatimeApp {
     controller: AppController,
     rx: Receiver<AppCommand>,
     tx: Sender<AppCommand>,
-    config_repo: TomlConfigRepository,
     last_tick: Instant,
 }
 
@@ -21,13 +19,11 @@ impl CatimeApp {
         controller: AppController,
         rx: Receiver<AppCommand>,
         tx: Sender<AppCommand>,
-        config_repo: TomlConfigRepository,
     ) -> Self {
         Self {
             controller,
             rx,
             tx,
-            config_repo,
             last_tick: Instant::now(),
         }
     }
@@ -42,7 +38,7 @@ impl eframe::App for CatimeApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if let Err(e) = self.config_repo.save(self.controller.config()) {
+        if let Err(e) = self.controller.save_config() {
             log::error!("failed to save config: {}", e);
         }
     }
@@ -66,7 +62,6 @@ impl CatimeApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     TimerFinished => {
-                        // 倒计时结束自动显示窗口
                         self.controller.handle(AppCommand::ShowWindow);
                     }
                     _ => {}
@@ -86,7 +81,7 @@ impl CatimeApp {
         }
     }
 
-    /// 构建 egui UI 布局：模式标题 → 大号时间 → 状态文字 → 操作按钮
+    /// 构建 egui UI 布局
     fn render_ui(&self, ctx: &egui::Context) {
         let vs = self.controller.view_state();
 
@@ -134,7 +129,7 @@ impl CatimeApp {
 
                 ui.add_space(16.0);
 
-                // 按钮行：开始/暂停、重置、模式切换
+                // 按钮行
                 ui.horizontal(|ui| {
                     let btn_label = match vs.status {
                         TimerStatus::Running => "暂停",

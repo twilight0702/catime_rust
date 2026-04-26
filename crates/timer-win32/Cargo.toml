@@ -1,5 +1,5 @@
 [package]
-name = "timer-egui"
+name = "timer-win32"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,12 +9,16 @@ name = "catime"
 path = "src/main.rs"
 
 [dependencies]
-anyhow.workspace = true
-env_logger.workspace = true
+windows = { version = "0.58", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+    "Win32_Foundation",
+    "Win32_UI_HiDpi",
+    "Win32_System_LibraryLoader",
+] }
 log.workspace = true
-eframe.workspace = true
-egui.workspace = true
-tray-icon.workspace = true
+env_logger.workspace = true
 notify.workspace = true
 image.workspace = true
 timer-core.workspace = true

@@ -1,5 +1,6 @@
 mod app;
 mod tray;
+mod watcher;
 
 use std::sync::mpsc;
 
@@ -70,13 +71,15 @@ fn main() {
         }
     };
 
-    let controller = AppController::new(config);
-
     let (tx, rx) = mpsc::channel::<timer_core::AppCommand>();
 
-    // 在主线程创建托盘，与 eframe 共用 Windows 消息泵，确保点击事件能分发。
-    // Box::leak 防止 TrayIcon 被析构导致图标消失。
+    // 在主线程创建托盘，与 eframe 共用 Windows 消息泵
     let _tray = Box::leak(Box::new(tray::create_tray(tx.clone())));
+
+    // 配置文件热更新监听
+    watcher::spawn_watcher(config_path, tx.clone());
+
+    let controller = AppController::new(config, Box::new(config_repo));
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -92,7 +95,7 @@ fn main() {
         native_options,
         Box::new(move |cc| {
             cc.egui_ctx.set_fonts(fonts.clone());
-            Ok(Box::new(CatimeApp::new(controller, rx, tx, config_repo)))
+            Ok(Box::new(CatimeApp::new(controller, rx, tx)))
         }),
     ) {
         log::error!("eframe error: {}", e);

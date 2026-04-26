@@ -4,7 +4,7 @@ members = [
     "crates/timer-core",
     "crates/timer-storage",
     "crates/timer-app",
-    "crates/timer-egui",
+    "crates/timer-win32",
 ]
 
 [workspace.package]
@@ -18,9 +18,8 @@ env_logger = "0.11"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-eframe = "0.31"
-egui = "0.31"
-tray-icon = "0.19"
+notify = "7"
+image = "0.25"
 timer-core = { path = "crates/timer-core" }
 timer-storage = { path = "crates/timer-storage" }
 timer-app = { path = "crates/timer-app" }

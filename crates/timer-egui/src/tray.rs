@@ -5,22 +5,16 @@ use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
 
 use timer_core::AppCommand;
 
-/// 程序化生成 16×16 蓝色 RGBA 图标（避免依赖 icon 文件）
+/// 从 assets/icon.ico 编译期嵌入图标并解码为 RGBA
 fn create_icon() -> Icon {
-    let width = 16;
-    let height = 16;
-    let mut rgba = Vec::with_capacity(width * height * 4);
+    let icon_bytes = include_bytes!("../../../assets/icon.ico");
+    let img = image::load_from_memory(icon_bytes)
+        .expect("failed to decode icon.ico")
+        .into_rgba8();
+    let (width, height) = img.dimensions();
+    let rgba = img.into_raw();
 
-    for _y in 0..height {
-        for _x in 0..width {
-            rgba.push(0x44);
-            rgba.push(0x88);
-            rgba.push(0xEE);
-            rgba.push(0xFF);
-        }
-    }
-
-    Icon::from_rgba(rgba, width as u32, height as u32)
+    Icon::from_rgba(rgba, width, height)
         .expect("failed to create tray icon from rgba")
 }
 

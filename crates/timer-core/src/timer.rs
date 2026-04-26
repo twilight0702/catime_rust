@@ -139,7 +139,8 @@ impl TimerEngine {
         }
     }
 
-    /// 设置倒计时时长。仅 Idle 状态下立即生效到 remaining_secs。
+    /// 设置倒计时时长。仅在 Idle 状态下重置剩余时间，
+    /// 运行中只更新 base 值，下次 Reset 时生效。
     fn handle_set_countdown(&mut self, secs: u64) -> Vec<AppEvent> {
         self.countdown_duration_secs = secs;
         if self.mode == TimerMode::Countdown && self.status == TimerStatus::Idle {
@@ -382,15 +383,17 @@ mod tests {
     }
 
     #[test]
-    fn set_countdown_does_not_reset_running_timer() {
+    fn set_countdown_does_not_affect_running_timer() {
         let mut engine = TimerEngine::new(TimerMode::Countdown, 10);
         engine.handle(AppCommand::Start);
         engine.handle(AppCommand::Tick);
         engine.handle(AppCommand::Tick);
         engine.handle(AppCommand::SetCountdown(60));
 
+        // 运行中修改时长只更新 base，不改变剩余时间和状态
         assert_eq!(engine.countdown_duration_secs, 60);
         assert_eq!(engine.remaining_secs, 8);
+        assert_eq!(engine.status, TimerStatus::Running);
     }
 
     #[test]
