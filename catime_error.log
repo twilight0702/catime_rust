@@ -3,3 +3,21 @@
 [1777212669][INFO] apply_countdown_setting: enter
 [1777212669][INFO] apply_countdown_setting: current_secs=1500, owner_null=false
 [1777212684][INFO] apply_countdown_setting: dialog returned secs=600
+[1777212920][INFO] apply_countdown_setting: enter
+[1777212920][INFO] apply_countdown_setting: current_secs=600, owner_null=false
+[1777212955][INFO] apply_countdown_setting: dialog returned secs=60
+[1777212988][INFO] apply_countdown_setting: enter
+[1777212988][INFO] apply_countdown_setting: current_secs=60, owner_null=false
+[1777212994][INFO] apply_countdown_setting: dialog returned secs=1200
+[1777213009][INFO] apply_countdown_setting: enter
+[1777213009][INFO] apply_countdown_setting: current_secs=1200, owner_null=false
+[1777213040][INFO] apply_countdown_setting: dialog canceled or failed
+[1777213443][INFO] apply_countdown_setting: enter
+[1777213443][INFO] apply_countdown_setting: current_secs=1200, owner_null=false
+[1777213452][INFO] apply_countdown_setting: dialog canceled or failed
+[1777213456][INFO] apply_countdown_setting: enter
+[1777213456][INFO] apply_countdown_setting: current_secs=1200, owner_null=false
+[1777213469][INFO] apply_countdown_setting: dialog returned secs=1210
+[1777213476][INFO] apply_countdown_setting: enter
+[1777213476][INFO] apply_countdown_setting: current_secs=1210, owner_null=false
+[1777213485][INFO] apply_countdown_setting: dialog returned secs=10

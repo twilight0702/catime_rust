@@ -6,8 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use windows::core::{w, HSTRING, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, InvalidateRect, SetBkMode, SetTextColor,
+    HBRUSH, PAINTSTRUCT, TRANSPARENT,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -18,8 +21,11 @@ const EDIT_INSET_Y: i32 = 8;
 
 struct DialogState {
     edit: HWND,
+    err_label: HWND,
     ok_btn: HWND,
     cancel_btn: HWND,
+    bg_brush: HBRUSH,
+    edit_brush: HBRUSH,
     render: RenderContext,
     error_text: Option<String>,
     initial_secs: u64,
@@ -108,8 +114,11 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
 
         let state = Box::new(DialogState {
             edit: HWND(null_mut()),
+            err_label: HWND(null_mut()),
             ok_btn: HWND(null_mut()),
             cancel_btn: HWND(null_mut()),
+            bg_brush: HBRUSH(null_mut()),
+            edit_brush: HBRUSH(null_mut()),
             render,
             error_text: None,
             initial_secs: current_secs,
@@ -329,10 +338,69 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
 
             if let (Ok(edit), Ok(ok_btn), Ok(cancel_btn)) = (edit, ok_btn, cancel_btn) {
                 (*state_ptr).edit = edit;
+                if let Ok(err_label) = _error {
+                    (*state_ptr).err_label = err_label;
+                    let _ = ShowWindow((*state_ptr).err_label, SW_HIDE);
+                }
                 (*state_ptr).ok_btn = ok_btn;
                 (*state_ptr).cancel_btn = cancel_btn;
                 let initial = timer_core::TimerEngine::format_duration((*state_ptr).initial_secs);
                 set_window_text(edit, &initial);
+
+                // 统一字体：标题略大，其余使用 label/button 字体
+                let _ = SendMessageW(
+                    edit,
+                    WM_SETFONT,
+                    WPARAM((*state_ptr).render.font_label.0 as usize),
+                    LPARAM(1),
+                );
+                if let Ok(t) = _title {
+                    let _ = SendMessageW(
+                        t,
+                        WM_SETFONT,
+                        WPARAM((*state_ptr).render.font_title.0 as usize),
+                        LPARAM(1),
+                    );
+                }
+                if let Ok(s) = _subtitle {
+                    let _ = SendMessageW(
+                        s,
+                        WM_SETFONT,
+                        WPARAM((*state_ptr).render.font_label.0 as usize),
+                        LPARAM(1),
+                    );
+                }
+                if let Ok(h) = _hint {
+                    let _ = SendMessageW(
+                        h,
+                        WM_SETFONT,
+                        WPARAM((*state_ptr).render.font_label.0 as usize),
+                        LPARAM(1),
+                    );
+                }
+                if !(*state_ptr).err_label.0.is_null() {
+                    let _ = SendMessageW(
+                        (*state_ptr).err_label,
+                        WM_SETFONT,
+                        WPARAM((*state_ptr).render.font_label.0 as usize),
+                        LPARAM(1),
+                    );
+                }
+                let _ = SendMessageW(
+                    ok_btn,
+                    WM_SETFONT,
+                    WPARAM((*state_ptr).render.font_btn.0 as usize),
+                    LPARAM(1),
+                );
+                let _ = SendMessageW(
+                    cancel_btn,
+                    WM_SETFONT,
+                    WPARAM((*state_ptr).render.font_btn.0 as usize),
+                    LPARAM(1),
+                );
+
+                (*state_ptr).bg_brush = CreateSolidBrush(COLORREF(0x00F8F8F8));
+                (*state_ptr).edit_brush = CreateSolidBrush(COLORREF(0x00FFFFFF));
             } else {
                 log_error("CreateWindowExW controls for countdown dialog failed");
             }
@@ -375,11 +443,54 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 if code == EN_CHANGE as u32 {
                     if (*state_ptr).error_text.is_some() {
                         (*state_ptr).error_text = None;
+                        if !(*state_ptr).err_label.0.is_null() {
+                            set_window_text((*state_ptr).err_label, "");
+                            let _ = ShowWindow((*state_ptr).err_label, SW_HIDE);
+                        }
                         InvalidateRect(hwnd, None, false).ok();
                     }
                 }
             }
             LRESULT(0)
+        }
+
+        WM_CTLCOLORDLG => {
+            let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
+            if !state_ptr.is_null() && !(*state_ptr).bg_brush.0.is_null() {
+                return LRESULT((*state_ptr).bg_brush.0 as isize);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+
+        WM_CTLCOLOREDIT => {
+            let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
+            if !state_ptr.is_null() {
+                let hdc = windows::Win32::Graphics::Gdi::HDC(wparam.0 as _);
+                let _ = SetBkMode(hdc, TRANSPARENT);
+                let _ = SetTextColor(hdc, COLORREF(0x00101010));
+                if !(*state_ptr).edit_brush.0.is_null() {
+                    return LRESULT((*state_ptr).edit_brush.0 as isize);
+                }
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+
+        WM_CTLCOLORSTATIC => {
+            let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
+            if !state_ptr.is_null() {
+                let hdc = windows::Win32::Graphics::Gdi::HDC(wparam.0 as _);
+                let src = HWND(lparam.0 as _);
+                let _ = SetBkMode(hdc, TRANSPARENT);
+                if src == (*state_ptr).err_label {
+                    let _ = SetTextColor(hdc, COLORREF(0x000000D0));
+                } else {
+                    let _ = SetTextColor(hdc, COLORREF(0x00444444));
+                }
+                if !(*state_ptr).bg_brush.0.is_null() {
+                    return LRESULT((*state_ptr).bg_brush.0 as isize);
+                }
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
 
         WM_SIZE => {
@@ -451,6 +562,12 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             log_warn("dialog_wndproc: WM_NCDESTROY");
             let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
             if !state_ptr.is_null() {
+                if !(*state_ptr).bg_brush.0.is_null() {
+                    let _ = DeleteObject((*state_ptr).bg_brush);
+                }
+                if !(*state_ptr).edit_brush.0.is_null() {
+                    let _ = DeleteObject((*state_ptr).edit_brush);
+                }
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
                 let _ = Box::from_raw(state_ptr);
             }
@@ -482,7 +599,12 @@ unsafe fn submit_dialog(hwnd: HWND, state_ptr: *mut DialogState) {
         }
         _ => {
             log_warn(&format!("invalid countdown input: {}", text));
-            (*state_ptr).error_text = Some("请输入有效时长（例如 1500 / 25:00 / 01:25:00）".into());
+            let msg = "请输入有效时长（例如 1500 / 25:00 / 01:25:00）".to_string();
+            (*state_ptr).error_text = Some(msg.clone());
+            if !(*state_ptr).err_label.0.is_null() {
+                set_window_text((*state_ptr).err_label, &msg);
+                let _ = ShowWindow((*state_ptr).err_label, SW_SHOW);
+            }
             InvalidateRect(hwnd, None, false).ok();
         }
     }
