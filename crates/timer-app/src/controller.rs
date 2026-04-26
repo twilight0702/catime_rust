@@ -55,6 +55,7 @@ impl AppController {
     fn handle_timer_command(&mut self, cmd: AppCommand) -> Vec<AppEvent> {
         let events = self.engine.handle(cmd);
         self.sync_view_state(&events);
+        self.sync_config_from_engine();
         events
     }
 
@@ -101,16 +102,33 @@ impl AppController {
         self.config_repo.save(&self.config)
     }
 
+    /// 更新窗口位置和尺寸（用于持久化）
+    pub fn update_window_bounds(&mut self, x: i32, y: i32, width: u32, height: u32) {
+        self.config.window.x = x;
+        self.config.window.y = y;
+        self.config.window.width = width;
+        self.config.window.height = height;
+    }
+
     /// 根据引擎事件同步 ViewState
     fn sync_view_state(&mut self, events: &[AppEvent]) {
-        let needs_sync = events.iter().any(|e| {
-            matches!(e, AppEvent::TimerUpdated | AppEvent::TimerFinished)
-        });
+        let needs_sync = events
+            .iter()
+            .any(|e| matches!(e, AppEvent::TimerUpdated | AppEvent::TimerFinished));
         if needs_sync {
             self.view_state.display_time = self.engine.display_time();
             self.view_state.mode = self.engine.mode;
             self.view_state.status = self.engine.status;
+            self.view_state.countdown_duration_secs = self.engine.countdown_duration_secs;
         }
+    }
+
+    fn sync_config_from_engine(&mut self) {
+        self.config.mode = match self.engine.mode {
+            timer_core::TimerMode::Stopwatch => timer_storage::TimerModeConfig::Stopwatch,
+            timer_core::TimerMode::Countdown => timer_storage::TimerModeConfig::Countdown,
+        };
+        self.config.duration_secs = self.engine.countdown_duration_secs;
     }
 
     fn handle_toggle_window(&mut self) -> Vec<AppEvent> {

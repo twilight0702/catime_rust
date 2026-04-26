@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use crate::config::AppConfig;
 
 /// 配置持久化抽象：不关心存储格式或位置
-pub trait ConfigRepository {
+pub trait ConfigRepository: Send + Sync {
     fn load(&self) -> anyhow::Result<AppConfig>;
     fn save(&self, config: &AppConfig) -> anyhow::Result<()>;
 }
@@ -21,8 +21,7 @@ impl TomlConfigRepository {
 
     /// 返回可执行文件同目录下的默认路径
     pub fn default_path() -> anyhow::Result<PathBuf> {
-        let mut exe_dir = std::env::current_exe()
-            .context("failed to get executable path")?;
+        let mut exe_dir = std::env::current_exe().context("failed to get executable path")?;
         exe_dir.pop();
         Ok(exe_dir.join("config.toml"))
     }
@@ -49,14 +48,11 @@ impl ConfigRepository for TomlConfigRepository {
     }
 
     fn save(&self, config: &AppConfig) -> anyhow::Result<()> {
-        let content = toml::to_string_pretty(config)
-            .context("failed to serialize config")?;
+        let content = toml::to_string_pretty(config).context("failed to serialize config")?;
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("failed to create config directory")?;
+            std::fs::create_dir_all(parent).context("failed to create config directory")?;
         }
-        std::fs::write(&self.path, content)
-            .context("failed to write config file")?;
+        std::fs::write(&self.path, content).context("failed to write config file")?;
         Ok(())
     }
 }

@@ -4,5 +4,7 @@
 pub mod config;
 pub mod repository;
 
-pub use config::{AppConfig, FontConfig, TimerModeConfig, TrayConfig, TrayLeftClickAction, WindowConfig};
+pub use config::{
+    AppConfig, FontConfig, TimerModeConfig, TrayConfig, TrayLeftClickAction, WindowConfig,
+};
 pub use repository::{ConfigRepository, TomlConfigRepository};

@@ -2,3 +2,4 @@
 /target
 /.codex
 /.claude
+/crates/timer-tauri/

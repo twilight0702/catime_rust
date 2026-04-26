@@ -25,11 +25,7 @@ pub fn spawn_watcher(config_path: PathBuf, cmd_tx: mpsc::Sender<AppCommand>) {
         .expect("failed to spawn config watcher thread");
 }
 
-fn run_watcher(
-    watch_dir: PathBuf,
-    config_path: PathBuf,
-    cmd_tx: mpsc::Sender<AppCommand>,
-) {
+fn run_watcher(watch_dir: PathBuf, config_path: PathBuf, cmd_tx: mpsc::Sender<AppCommand>) {
     let (evt_tx, evt_rx) = mpsc::channel();
 
     let mut watcher = match notify::recommended_watcher(move |res| {
@@ -85,16 +81,10 @@ fn run_watcher(
 }
 
 /// 判断事件是否与目标配置文件相关
-fn is_relevant_event(
-    event: &notify::Event,
-    config_path: &PathBuf,
-) -> bool {
+fn is_relevant_event(event: &notify::Event, config_path: &PathBuf) -> bool {
     let path_matches = event.paths.iter().any(|p| p == config_path);
     if !path_matches {
         return false;
     }
-    matches!(
-        event.kind,
-        EventKind::Modify(_) | EventKind::Create(_)
-    )
+    matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
 }

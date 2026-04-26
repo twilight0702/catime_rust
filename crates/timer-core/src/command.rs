@@ -3,6 +3,7 @@ use crate::timer::TimerMode;
 /// 应用命令：来自 UI / 托盘 / 系统事件的输入。
 /// 每个命令对应一个明确的用户或系统操作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AppCommand {
     // --- 计时控制 ---
     Start,

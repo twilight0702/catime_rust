@@ -5,6 +5,7 @@ members = [
     "crates/timer-storage",
     "crates/timer-app",
     "crates/timer-win32",
+    "crates/timer-tauri",
 ]
 
 [workspace.package]
@@ -20,6 +21,9 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 notify = "7"
 image = "0.25"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-build = "2"
+serde_json = "1"
 timer-core = { path = "crates/timer-core" }
 timer-storage = { path = "crates/timer-storage" }
 timer-app = { path = "crates/timer-app" }

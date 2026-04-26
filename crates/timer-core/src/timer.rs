@@ -3,6 +3,7 @@ use crate::event::AppEvent;
 
 /// 计时模式：正计时 / 倒计时
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TimerMode {
     Stopwatch,
     Countdown,
@@ -10,6 +11,7 @@ pub enum TimerMode {
 
 /// 计时器状态：就绪 → 运行中 ↔ 暂停 → 已结束
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TimerStatus {
     /// 就绪（重置后）
     Idle,

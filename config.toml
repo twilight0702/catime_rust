@@ -1,5 +1,5 @@
 mode = "countdown"
-duration_secs = 1500
+duration_secs = 150
 always_on_top = true
 opacity = 0.85
 hot_reload = true

@@ -2,13 +2,12 @@ use timer_core::AppCommand;
 use windows::core::w;
 use windows::Win32::Foundation::{BOOL, HWND};
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NOTIFYICONDATAW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD,
-    NIM_DELETE,
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, DestroyMenu, GetCursorPos,
-    SetForegroundWindow, TrackPopupMenu, HICON, LR_DEFAULTCOLOR, MF_STRING,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    SetForegroundWindow, TrackPopupMenu, HICON, LR_DEFAULTCOLOR, MF_STRING, TPM_BOTTOMALIGN,
+    TPM_LEFTALIGN, TPM_RETURNCMD,
 };
 
 pub const WM_APP_TRAY: u32 = 0x8001;
@@ -20,6 +19,7 @@ pub const MENU_STOPWATCH: usize = 1004;
 pub const MENU_COUNTDOWN: usize = 1005;
 pub const MENU_TOGGLE: usize = 1006;
 pub const MENU_QUIT: usize = 1007;
+pub const MENU_SET_COUNTDOWN: usize = 1008;
 
 fn create_hicon() -> HICON {
     let icon_bytes = include_bytes!("../../../assets/icon.ico");
@@ -42,24 +42,23 @@ fn create_hicon() -> HICON {
 
     let e = entry + best_idx * 16;
     let img_offset = u32::from_le_bytes([
-        icon_bytes[e + 12], icon_bytes[e + 13], icon_bytes[e + 14], icon_bytes[e + 15],
+        icon_bytes[e + 12],
+        icon_bytes[e + 13],
+        icon_bytes[e + 14],
+        icon_bytes[e + 15],
     ]) as usize;
     let img_size = u32::from_le_bytes([
-        icon_bytes[e + 8], icon_bytes[e + 9], icon_bytes[e + 10], icon_bytes[e + 11],
+        icon_bytes[e + 8],
+        icon_bytes[e + 9],
+        icon_bytes[e + 10],
+        icon_bytes[e + 11],
     ]) as usize;
 
     let img_data = &icon_bytes[img_offset..img_offset + img_size];
 
     unsafe {
-        CreateIconFromResourceEx(
-            img_data,
-            BOOL(1),
-            0x00030000,
-            0,
-            0,
-            LR_DEFAULTCOLOR,
-        )
-        .expect("failed to create tray icon")
+        CreateIconFromResourceEx(img_data, BOOL(1), 0x00030000, 0, 0, LR_DEFAULTCOLOR)
+            .expect("failed to create tray icon")
     }
 }
 
@@ -107,6 +106,7 @@ pub fn show_tray_menu(hwnd: HWND) -> Option<usize> {
         AppendMenuW(menu, MF_STRING, MENU_RESET, w!("重置"));
         AppendMenuW(menu, MF_STRING, MENU_STOPWATCH, w!("正计时"));
         AppendMenuW(menu, MF_STRING, MENU_COUNTDOWN, w!("倒计时"));
+        AppendMenuW(menu, MF_STRING, MENU_SET_COUNTDOWN, w!("设置倒计时..."));
         AppendMenuW(menu, MF_STRING, MENU_TOGGLE, w!("显示/隐藏"));
         AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("退出"));
 
@@ -116,7 +116,7 @@ pub fn show_tray_menu(hwnd: HWND) -> Option<usize> {
 
         let cmd = TrackPopupMenu(
             menu,
-            TPM_BOTTOMALIGN | TPM_LEFTALIGN,
+            TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RETURNCMD,
             pt.x,
             pt.y,
             0,

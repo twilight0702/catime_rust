@@ -1,0 +1,5 @@
+[1777212481][INFO] apply_countdown_setting: enter
+[1777212481][INFO] apply_countdown_setting: current_secs=1500, owner_null=false
+[1777212669][INFO] apply_countdown_setting: enter
+[1777212669][INFO] apply_countdown_setting: current_secs=1500, owner_null=false
+[1777212684][INFO] apply_countdown_setting: dialog returned secs=600
