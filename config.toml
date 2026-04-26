@@ -1,0 +1,21 @@
+mode = "countdown"
+duration_secs = 1500
+always_on_top = true
+opacity = 0.85
+hot_reload = true
+
+[window]
+x = 100
+y = 100
+width = 300
+height = 120
+locked = false
+
+[font]
+family = "Segoe UI"
+size = 56
+color = "#FFFFFF"
+
+[tray]
+left_click_action = "toggle_window"
+show_remaining_tooltip = true

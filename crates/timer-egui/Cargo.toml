@@ -1,0 +1,20 @@
+[package]
+name = "timer-egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "catime"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+env_logger.workspace = true
+log.workspace = true
+eframe.workspace = true
+egui.workspace = true
+tray-icon.workspace = true
+timer-core.workspace = true
+timer-storage.workspace = true
+timer-app.workspace = true

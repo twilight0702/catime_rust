@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/timer-core",
+    "crates/timer-storage",
+    "crates/timer-app",
+    "crates/timer-egui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+env_logger = "0.11"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+eframe = "0.31"
+egui = "0.31"
+tray-icon = "0.19"
+timer-core = { path = "crates/timer-core" }
+timer-storage = { path = "crates/timer-storage" }
+timer-app = { path = "crates/timer-app" }
