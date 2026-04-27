@@ -1,3 +1,6 @@
+//! 倒计时设置对话框：Windows 原生模态对话框。
+//! 使用 raw Win32 API 创建控件（EDIT、BUTTON、STATIC），运行独立消息循环。
+
 use std::io::Write;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,20 +19,33 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::render::{self, RenderContext};
 
+/// 输入框相对于布局边界的缩进
 const EDIT_INSET_X: i32 = 10;
 const EDIT_INSET_Y: i32 = 8;
 
+/// 对话框内部状态：持有所有子控件句柄和结果通道。
 struct DialogState {
+    /// 输入框（EDIT 控件）
     edit: HWND,
+    /// 错误提示标签（STATIC 控件）
     err_label: HWND,
+    /// 确定按钮
     ok_btn: HWND,
+    /// 取消按钮
     cancel_btn: HWND,
+    /// 对话框背景画刷
     bg_brush: HBRUSH,
+    /// 输入框背景画刷
     edit_brush: HBRUSH,
+    /// 渲染上下文（字体 + DPI 缩放）
     render: RenderContext,
+    /// 当前错误文本
     error_text: Option<String>,
+    /// 初始倒计时秒数（用于预填输入框）
     initial_secs: u64,
+    /// 返回结果：Some(秒数) 或 None（取消）
     result: Arc<Mutex<Option<u64>>>,
+    /// 对话框是否已关闭
     done: Arc<AtomicBool>,
 }
 
@@ -70,6 +86,10 @@ fn append_error_file(level: &str, msg: &str) {
     }
 }
 
+/// 弹出倒计时设置对话框，返回用户输入的秒数（取消返回 None）。
+///
+/// `parent`：父窗口句柄，对话框将居中显示在其上方。
+/// `current_secs`：当前倒计时秒数，用于预填输入框。
 pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> {
     static REGISTER_ONCE: Once = Once::new();
 
@@ -81,6 +101,7 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
         ));
         let instance = GetModuleHandleW(None).ok()?;
 
+        // 只注册一次窗口类（线程安全）
         REGISTER_ONCE.call_once(|| {
             let wc = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -101,6 +122,7 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
         let result = Arc::new(Mutex::new(None));
         let done = Arc::new(AtomicBool::new(false));
 
+        // 计算对话框位置（居中于父窗口或屏幕默认位置）
         let (x, y) = if parent.0.is_null() {
             (200, 160)
         } else {
@@ -127,6 +149,7 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
         });
         let state_ptr = Box::into_raw(state);
 
+        // 创建对话框窗口
         let hwnd = match CreateWindowExW(
             WS_EX_DLGMODALFRAME,
             CLASS_NAME,
@@ -154,6 +177,7 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
         let _ = ShowWindow(hwnd, SW_SHOW);
         log_warn("prompt_countdown_seconds: entering message loop");
 
+        // 独立消息循环：阻塞调用线程直到对话框关闭
         let mut msg = MSG::default();
         while !done.load(Ordering::Acquire) {
             let ret = GetMessageW(&mut msg, None, 0, 0);
@@ -163,6 +187,7 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
                 }
                 break;
             }
+            // 将对话框键盘导航消息分发给 IsDialogMessageW 处理
             if !IsDialogMessageW(hwnd, &msg).as_bool() {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
@@ -170,11 +195,13 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
         }
         log_warn("prompt_countdown_seconds: message loop ended");
 
+        // 确保窗口已销毁
         if IsWindow(hwnd).as_bool() {
             let _ = DestroyWindow(hwnd);
             log_warn("prompt_countdown_seconds: DestroyWindow from loop exit");
         }
 
+        // 恢复父窗口焦点
         if !parent.0.is_null() {
             let _ = SetForegroundWindow(parent);
         }
@@ -185,6 +212,7 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
     }
 }
 
+/// 对话框窗口过程入口（带 panic 保护）。
 unsafe extern "system" fn dialog_wndproc(
     hwnd: HWND,
     msg: u32,
@@ -203,6 +231,7 @@ unsafe extern "system" fn dialog_wndproc(
     }
 }
 
+/// 对话框窗口过程实现：处理 WM_CREATE（创建控件）、WM_COMMAND（按钮/输入）、颜色绘制等。
 unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_CREATE => {
@@ -225,6 +254,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             let hint_h = layout.hint.bottom - layout.hint.top;
             let error_h = layout.error.bottom - layout.error.top;
 
+            // 标题（STATIC 控件）
             let _title = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
@@ -240,6 +270,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 None,
             );
 
+            // 副标题：格式说明
             let _subtitle = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
@@ -255,6 +286,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 None,
             );
 
+            // 输入框（EDIT 控件）
             let edit_style =
                 WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | ES_AUTOHSCROLL as u32);
             let edit = CreateWindowExW(
@@ -272,6 +304,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 None,
             );
 
+            // 输入提示
             let _hint = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
@@ -287,6 +320,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 None,
             );
 
+            // 错误提示标签（初始隐藏）
             let _error = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
@@ -302,6 +336,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 None,
             );
 
+            // 确定按钮（默认按钮，回车触发）
             let ok_style =
                 WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32);
             let ok_btn = CreateWindowExW(
@@ -319,6 +354,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 None,
             );
 
+            // 取消按钮
             let cancel_style =
                 WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32);
             let cancel_btn = CreateWindowExW(
@@ -344,10 +380,12 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 }
                 (*state_ptr).ok_btn = ok_btn;
                 (*state_ptr).cancel_btn = cancel_btn;
+
+                // 预填当前倒计时时长
                 let initial = timer_core::TimerEngine::format_duration((*state_ptr).initial_secs);
                 set_window_text(edit, &initial);
 
-                // 统一字体：标题略大，其余使用 label/button 字体
+                // 统一设置所有子控件字体
                 let _ = SendMessageW(
                     edit,
                     WM_SETFONT,
@@ -399,6 +437,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                     LPARAM(1),
                 );
 
+                // 背景画刷
                 (*state_ptr).bg_brush = CreateSolidBrush(COLORREF(0x00F8F8F8));
                 (*state_ptr).edit_brush = CreateSolidBrush(COLORREF(0x00FFFFFF));
             } else {
@@ -427,17 +466,20 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             }
 
             let source = HWND(lparam.0 as _);
+            // 确定按钮 → 解析并提交
             if source == (*state_ptr).ok_btn {
                 submit_dialog(hwnd, state_ptr);
                 return LRESULT(0);
             }
 
+            // 取消按钮 → 关闭对话框
             if source == (*state_ptr).cancel_btn {
                 (*state_ptr).done.store(true, Ordering::Release);
                 let _ = DestroyWindow(hwnd);
                 return LRESULT(0);
             }
 
+            // 输入框文本变化 → 清除错误提示
             if source == (*state_ptr).edit {
                 let code = ((wparam.0 >> 16) & 0xFFFF) as u32;
                 if code == EN_CHANGE as u32 {
@@ -454,6 +496,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             LRESULT(0)
         }
 
+        // 自定义对话框背景色
         WM_CTLCOLORDLG => {
             let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
             if !state_ptr.is_null() && !(*state_ptr).bg_brush.0.is_null() {
@@ -462,6 +505,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
 
+        // 自定义输入框背景色和文字色
         WM_CTLCOLOREDIT => {
             let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
             if !state_ptr.is_null() {
@@ -475,6 +519,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
 
+        // 自定义 STATIC 控件文字色（错误标签为红色）
         WM_CTLCOLORSTATIC => {
             let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
             if !state_ptr.is_null() {
@@ -482,9 +527,9 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 let src = HWND(lparam.0 as _);
                 let _ = SetBkMode(hdc, TRANSPARENT);
                 if src == (*state_ptr).err_label {
-                    let _ = SetTextColor(hdc, COLORREF(0x000000D0));
+                    let _ = SetTextColor(hdc, COLORREF(0x000000D0)); // 红色
                 } else {
-                    let _ = SetTextColor(hdc, COLORREF(0x00444444));
+                    let _ = SetTextColor(hdc, COLORREF(0x00444444)); // 深灰
                 }
                 if !(*state_ptr).bg_brush.0.is_null() {
                     return LRESULT((*state_ptr).bg_brush.0 as isize);
@@ -493,6 +538,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
 
+        // 窗口缩放 → 重新计算输入框位置
         WM_SIZE => {
             log_warn("dialog_wndproc: WM_SIZE");
             let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
@@ -513,6 +559,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             LRESULT(0)
         }
 
+        // DPI 变更 → 重建字体并调整窗口尺寸
         WM_DPICHANGED => {
             log_warn("dialog_wndproc: WM_DPICHANGED");
             let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
@@ -558,6 +605,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             LRESULT(0)
         }
 
+        // 最后一个窗口消息：清理 GDI 资源和 DialogState
         WM_NCDESTROY => {
             log_warn("dialog_wndproc: WM_NCDESTROY");
             let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState;
@@ -569,7 +617,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                     let _ = DeleteObject((*state_ptr).edit_brush);
                 }
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-                let _ = Box::from_raw(state_ptr);
+                let _ = Box::from_raw(state_ptr); // 释放 DialogState
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
@@ -578,6 +626,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
     }
 }
 
+/// 提交对话框：解析输入框文本，有效则写入 result 并关闭，无效则显示错误。
 unsafe fn submit_dialog(hwnd: HWND, state_ptr: *mut DialogState) {
     if state_ptr.is_null() {
         log_error("submit_dialog got null state_ptr");
@@ -610,6 +659,7 @@ unsafe fn submit_dialog(hwnd: HWND, state_ptr: *mut DialogState) {
     }
 }
 
+/// 设置窗口/控件文本（UTF-16）。
 fn set_window_text(hwnd: HWND, text: &str) {
     let s = HSTRING::from(text);
     unsafe {
@@ -617,6 +667,7 @@ fn set_window_text(hwnd: HWND, text: &str) {
     }
 }
 
+/// 获取窗口/控件文本（UTF-16 → Rust String）。
 fn get_window_text(hwnd: HWND) -> String {
     unsafe {
         let len = GetWindowTextLengthW(hwnd);
@@ -630,23 +681,27 @@ fn get_window_text(hwnd: HWND) -> String {
     }
 }
 
+/// 解析用户输入的时长字符串为秒数。
+/// 支持格式：纯数字（秒数）、MM:SS、HH:MM:SS。
 fn parse_duration_to_secs(input: &str) -> Option<u64> {
     let text = input.trim();
     if text.is_empty() {
         return None;
     }
 
+    // 纯数字 → 直接当秒数
     if !text.contains(':') {
         return text.parse::<u64>().ok();
     }
 
+    // 冒号分隔 → 解析 MM:SS 或 HH:MM:SS
     let parts: Vec<&str> = text.split(':').collect();
     match parts.as_slice() {
         [m, s] => {
             let m = parse_part(m)?;
             let s = parse_part(s)?;
             if s >= 60 {
-                return None;
+                return None; // 秒数不能 >= 60
             }
             Some(m * 60 + s)
         }
@@ -655,7 +710,7 @@ fn parse_duration_to_secs(input: &str) -> Option<u64> {
             let m = parse_part(m)?;
             let s = parse_part(s)?;
             if m >= 60 || s >= 60 {
-                return None;
+                return None; // 分/秒不能 >= 60
             }
             Some(h * 3600 + m * 60 + s)
         }
@@ -663,6 +718,7 @@ fn parse_duration_to_secs(input: &str) -> Option<u64> {
     }
 }
 
+/// 解析时长字符串中的一个数字部分。
 fn parse_part(part: &str) -> Option<u64> {
     if part.is_empty() {
         return None;
@@ -697,7 +753,7 @@ mod tests {
     fn rejects_invalid() {
         assert_eq!(parse_duration_to_secs(""), None);
         assert_eq!(parse_duration_to_secs("abc"), None);
-        assert_eq!(parse_duration_to_secs("12:70"), None);
-        assert_eq!(parse_duration_to_secs("1:70:00"), None);
+        assert_eq!(parse_duration_to_secs("12:70"), None); // 秒 >= 60
+        assert_eq!(parse_duration_to_secs("1:70:00"), None); // 分 >= 60
     }
 }

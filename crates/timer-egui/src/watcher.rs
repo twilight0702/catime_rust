@@ -1,3 +1,6 @@
+//! 配置文件热更新监听模块。
+//! 使用 `notify` crate 监听 `config.toml` 的文件变更，经防抖后触发重载。
+
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -8,9 +11,10 @@ use timer_core::AppCommand;
 
 /// 启动配置文件监听线程。
 ///
-/// 检测到 config.toml 变更后，经 300ms 防抖，发送 AppCommand::ReloadConfig。
+/// 检测到 `config.toml` 变更后，经 300ms 防抖，发送 `AppCommand::ReloadConfig`。
 /// 所有错误仅记日志，不会导致程序崩溃。
 pub fn spawn_watcher(config_path: PathBuf, cmd_tx: mpsc::Sender<AppCommand>) {
+    // 监听配置文件的父目录（因为编辑器可能通过 rename+write 保存）
     let parent = match config_path.parent() {
         Some(p) => p.to_path_buf(),
         None => {
@@ -25,11 +29,13 @@ pub fn spawn_watcher(config_path: PathBuf, cmd_tx: mpsc::Sender<AppCommand>) {
         .expect("failed to spawn config watcher thread");
 }
 
+/// 监听线程主循环。
 fn run_watcher(
     watch_dir: PathBuf,
     config_path: PathBuf,
     cmd_tx: mpsc::Sender<AppCommand>,
 ) {
+    // 创建内部通道转发 notify 事件
     let (evt_tx, evt_rx) = mpsc::channel();
 
     let mut watcher = match notify::recommended_watcher(move |res| {
@@ -42,6 +48,7 @@ fn run_watcher(
         }
     };
 
+    // 只监听目录本身，不递归
     if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::NonRecursive) {
         log::warn!("failed to watch config directory: {}", e);
         return;
@@ -50,31 +57,31 @@ fn run_watcher(
     log::info!("hot-reload active, watching: {}", config_path.display());
 
     loop {
-        // 等待第一个文件变更事件
+        // 阻塞等待第一个文件变更事件
         let event = match evt_rx.recv() {
             Ok(Ok(event)) => event,
             Ok(Err(e)) => {
                 log::debug!("file watcher event error: {}", e);
                 continue;
             }
-            Err(_) => break,
+            Err(_) => break, // 通道关闭，退出线程
         };
 
-        // 只处理 Modify / Create 事件，且路径匹配 config.toml
+        // 只处理目标配置文件的 Modify / Create 事件
         if !is_relevant_event(&event, &config_path) {
             continue;
         }
 
-        // 防抖：300ms 内不再收到新事件才触发重载
+        // 防抖循环：300ms 内收到新事件则重置计时，超时则触发重载
         loop {
             match evt_rx.recv_timeout(Duration::from_millis(300)) {
                 Ok(Ok(e)) if !is_relevant_event(&e, &config_path) => continue,
-                Ok(Ok(_)) => continue, // 收到新事件，重置计时
+                Ok(Ok(_)) => continue, // 收到相关新事件，重置 300ms 计时
                 Ok(Err(e)) => {
                     log::debug!("file watcher event error: {}", e);
                     continue;
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => break, // 300ms 静默 → 触发
+                Err(mpsc::RecvTimeoutError::Timeout) => break, // 300ms 静默期结束 → 触发
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
         }
@@ -84,7 +91,8 @@ fn run_watcher(
     }
 }
 
-/// 判断事件是否与目标配置文件相关
+/// 判断文件系统事件是否与目标配置文件相关。
+/// 仅 `Modify` 或 `Create` 且路径完全匹配时才返回 true。
 fn is_relevant_event(
     event: &notify::Event,
     config_path: &PathBuf,

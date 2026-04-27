@@ -1,3 +1,6 @@
+//! 主窗口消息处理（WndProc）和事件分发。
+//! 处理所有 Windows 消息：绘制、计时器、鼠标点击、托盘消息、DPI 变更等。
+
 use std::io::Write;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
@@ -13,10 +16,13 @@ use crate::countdown_dialog;
 use crate::render::{self, ButtonHit, RenderContext};
 use crate::tray;
 
+/// 窗口关联的应用状态，通过 `GWLP_USERDATA` 存储在窗口中。
 pub struct AppState {
     pub controller: AppController,
+    /// 命令接收端（来自文件监听器线程）
     pub rx: Receiver<AppCommand>,
     pub render: RenderContext,
+    /// 上次 Tick 时刻
     pub last_tick: Instant,
 }
 
@@ -30,6 +36,7 @@ fn append_error_file(level: &str, msg: &str) {
         .unwrap_or(0);
     let line = format!("[{}][{}] {}", ts, level, msg);
 
+    // 写入当前目录和 exe 同目录两个位置（调试用）
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -51,6 +58,7 @@ fn append_error_file(level: &str, msg: &str) {
     }
 }
 
+/// 窗口过程入口：捕获 panic 防止崩溃导致整个程序退出。
 pub unsafe extern "system" fn wndproc(
     hwnd: HWND,
     msg: u32,
@@ -73,9 +81,11 @@ pub unsafe extern "system" fn wndproc(
 unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_CREATE => {
+            // 从 CREATESTRUCT 中取出 AppState 指针存入窗口
             let cs = &*(lparam.0 as *const CREATESTRUCTW);
             let state_ptr = cs.lpCreateParams as *mut AppState;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr as isize);
+            // 启动 1 秒间隔的定时器
             SetTimer(hwnd, ID_TICK, 1000, None);
             LRESULT(0)
         }
@@ -84,13 +94,14 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             let Some(state) = try_get_state(hwnd) else {
                 return DefWindowProcW(hwnd, msg, wparam, lparam);
             };
+            // 先处理队列中的命令，再渲染
             drain_commands(hwnd, state);
             let vs = state.controller.view_state().clone();
             render::paint(hwnd, &state.render, &vs);
             LRESULT(0)
         }
 
-        // 背景由 render::paint 统一处理，避免默认擦背景造成闪烁
+        // 阻止系统默认擦除背景（由 render::paint 双缓冲统一处理）
         WM_ERASEBKGND => LRESULT(1),
 
         WM_TIMER => {
@@ -98,12 +109,13 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 return DefWindowProcW(hwnd, msg, wparam, lparam);
             };
             drain_commands(hwnd, state);
-            // 仅运行时 Tick
+            // 仅 Running 状态推进 Tick
             if state.controller.view_state().status == TimerStatus::Running {
                 let events = state.controller.handle(AppCommand::Tick);
                 process_events(hwnd, state, &events);
                 state.last_tick = Instant::now();
             }
+            // 触发重绘
             InvalidateRect(hwnd, None, false).ok();
             LRESULT(0)
         }
@@ -112,6 +124,7 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             let Some(state) = try_get_state(hwnd) else {
                 return DefWindowProcW(hwnd, msg, wparam, lparam);
             };
+            // 从 lparam 解析鼠标坐标
             let x = (lparam.0 & 0xFFFF) as u16 as f32;
             let y = ((lparam.0 >> 16) & 0xFFFF) as u16 as f32;
             let status = state.controller.view_state().status;
@@ -146,10 +159,11 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             LRESULT(0)
         }
 
-        // 托盘自定义消息
+        // 托盘图标消息（通过 WM_APP_TRAY 自定义消息）
         msg if msg == tray::WM_APP_TRAY => {
             let lo = (lparam.0 & 0xFFFF) as u32;
             match lo {
+                // 左键点击托盘图标 → 显示窗口
                 WM_LBUTTONUP => {
                     let Some(state) = try_get_state(hwnd) else {
                         return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -157,6 +171,7 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     let events = state.controller.handle(AppCommand::ShowWindow);
                     process_events(hwnd, state, &events);
                 }
+                // 右键点击托盘图标 → 弹出菜单
                 WM_RBUTTONUP => {
                     if let Some(menu_id) = tray::show_tray_menu(hwnd) {
                         if menu_id == tray::MENU_SET_COUNTDOWN {
@@ -176,6 +191,7 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             LRESULT(0)
         }
 
+        // 菜单/加速键命令
         WM_COMMAND => {
             let menu_id = wparam.0 as usize;
             if menu_id == tray::MENU_SET_COUNTDOWN {
@@ -192,12 +208,13 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             LRESULT(0)
         }
 
+        // 窗口尺寸变化 → 重绘
         WM_SIZE => {
             InvalidateRect(hwnd, None, false).ok();
             LRESULT(0)
         }
 
-        // 窗口移动到不同 DPI 的屏幕时 Windows 发送此消息
+        /// DPI 变更（窗口被拖到不同 DPI 的显示器）：重建字体并调整窗口大小。
         WM_DPICHANGED => {
             let Some(state) = try_get_state(hwnd) else {
                 return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -222,8 +239,8 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             LRESULT(0)
         }
 
+        // 关闭按钮 → 隐藏窗口（不退出）
         WM_CLOSE => {
-            // 隐藏而非退出，并同步 controller 的 window_visible 状态
             let Some(state) = try_get_state(hwnd) else {
                 return DefWindowProcW(hwnd, msg, wparam, lparam);
             };
@@ -235,7 +252,7 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
         WM_DESTROY => {
             tray::remove_tray(hwnd);
             KillTimer(hwnd, ID_TICK);
-            PostQuitMessage(0);
+            PostQuitMessage(0); // 通知消息循环退出
             LRESULT(0)
         }
 
@@ -243,6 +260,7 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
     }
 }
 
+/// 从窗口的 GWLP_USERDATA 取出 AppState 指针。
 fn try_get_state(hwnd: HWND) -> Option<&'static mut AppState> {
     unsafe {
         let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
@@ -255,6 +273,7 @@ fn try_get_state(hwnd: HWND) -> Option<&'static mut AppState> {
     }
 }
 
+/// 从 mpsc 通道取出所有待处理的命令并执行（非阻塞）。
 fn drain_commands(hwnd: HWND, state: &mut AppState) {
     loop {
         let cmd = match state.rx.try_recv() {
@@ -267,6 +286,7 @@ fn drain_commands(hwnd: HWND, state: &mut AppState) {
     }
 }
 
+/// 处理引擎返回的事件：显示/隐藏窗口、退出、倒计时结束自动弹窗。
 fn process_events(hwnd: HWND, state: &mut AppState, events: &[AppEvent]) {
     for event in events {
         match event {
@@ -285,6 +305,7 @@ fn process_events(hwnd: HWND, state: &mut AppState, events: &[AppEvent]) {
                 return;
             }
             AppEvent::TimerFinished => {
+                // 倒计时结束时自动弹出窗口
                 let extra = state.controller.handle(AppCommand::ShowWindow);
                 process_events(hwnd, state, &extra);
             }
@@ -293,8 +314,10 @@ fn process_events(hwnd: HWND, state: &mut AppState, events: &[AppEvent]) {
     }
 }
 
+/// 弹出倒计时设置对话框，将用户输入的时长应用到引擎。
 fn apply_countdown_setting(hwnd: HWND) {
     append_error_file("INFO", "apply_countdown_setting: enter");
+    // 获取当前倒计时时长和父窗口句柄
     let (current, owner) = {
         let Some(state) = try_get_state(hwnd) else {
             append_error_file(
@@ -304,6 +327,7 @@ fn apply_countdown_setting(hwnd: HWND) {
             return;
         };
         let current = state.controller.view_state().countdown_duration_secs;
+        // 若窗口可见则作为对话框所有者，否则传 null（独立弹出）
         let owner = unsafe {
             if IsWindowVisible(hwnd).as_bool() {
                 hwnd
@@ -322,6 +346,7 @@ fn apply_countdown_setting(hwnd: HWND) {
         ),
     );
 
+    // 弹出对话框
     if let Some(secs) = countdown_dialog::prompt_countdown_seconds(owner, current) {
         append_error_file(
             "INFO",
@@ -335,11 +360,13 @@ fn apply_countdown_setting(hwnd: HWND) {
             return;
         };
         let mut events = Vec::new();
+        // 切换到倒计时模式
         events.extend(
             state
                 .controller
                 .handle(AppCommand::SwitchMode(timer_core::TimerMode::Countdown)),
         );
+        // 应用新时长
         events.extend(state.controller.handle(AppCommand::SetCountdown(secs)));
         process_events(hwnd, state, &events);
         if let Err(e) = state.controller.save_config() {

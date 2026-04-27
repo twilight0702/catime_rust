@@ -1,3 +1,5 @@
+//! 系统托盘图标模块：托盘右键菜单 + 左键点击事件。
+
 use std::sync::mpsc;
 
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
@@ -5,7 +7,8 @@ use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
 
 use timer_core::AppCommand;
 
-/// 从 assets/icon.ico 编译期嵌入图标并解码为 RGBA
+/// 从 `assets/icon.ico` 编译期嵌入图标并解码为 RGBA 格式。
+/// 使用 `include_bytes!` 在编译时将图标数据嵌入二进制。
 fn create_icon() -> Icon {
     let icon_bytes = include_bytes!("../../../assets/icon.ico");
     let img = image::load_from_memory(icon_bytes)
@@ -20,10 +23,11 @@ fn create_icon() -> Icon {
 
 /// 创建托盘图标并设置事件回调。
 /// 必须在主线程调用以共享 Windows 消息泵。
-/// 返回的 TrayIcon 句柄须保持存活，否则图标会消失。
+/// 返回的 `TrayIcon` 句柄须保持存活（`Box::leak`），否则图标会消失。
 pub fn create_tray(tx: mpsc::Sender<AppCommand>) -> tray_icon::TrayIcon {
     let icon = create_icon();
 
+    // 构建右键菜单
     let menu = Menu::new();
     menu.append(&MenuItem::new("开始", true, None)).ok();
     menu.append(&MenuItem::new("暂停", true, None)).ok();
@@ -40,7 +44,7 @@ pub fn create_tray(tx: mpsc::Sender<AppCommand>) -> tray_icon::TrayIcon {
         .build()
         .expect("failed to create tray icon");
 
-    // 托盘左键/双击 → 切换窗口
+    // 托盘左键/双击 → 切换窗口可见性
     let tx_click = tx.clone();
     TrayIconEvent::set_event_handler(Some(Box::new(move |event: TrayIconEvent| {
         if matches!(

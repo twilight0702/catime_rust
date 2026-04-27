@@ -3,3 +3,4 @@
 /.codex
 /.claude
 /crates/timer-tauri/
+catime_error.log

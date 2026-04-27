@@ -1,3 +1,7 @@
+//! Catime Win32 原生 GUI 入口。
+//! 使用 raw Win32 API (`windows` crate) 创建窗口、系统托盘和消息循环。
+//! 不使用任何 UI 框架，直接调用 GDI 渲染。
+
 #![windows_subsystem = "windows"]
 #![allow(unused_must_use)]
 
@@ -27,6 +31,7 @@ use window::{wndproc, AppState};
 
 const ERROR_LOG_FILE: &str = "catime_error.log";
 
+/// 将错误/信息写入可执行文件同目录的 `catime_error.log`。
 fn append_error_file(level: &str, msg: &str) {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -51,6 +56,7 @@ fn append_error_file(level: &str, msg: &str) {
     }
 }
 
+/// 安装全局 panic hook：捕获 panic 后写入日志文件和 `catime_error.log`。
 fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
@@ -83,6 +89,7 @@ fn main() {
 
     env_logger::init();
 
+    // 加载配置文件
     let config_path = match TomlConfigRepository::default_path() {
         Ok(p) => p,
         Err(e) => {
@@ -104,6 +111,7 @@ fn main() {
     let controller = AppController::new(config, Box::new(config_repo));
     let render = render::RenderContext::new();
 
+    // 创建命令通道
     let (tx, rx) = mpsc::channel::<timer_core::AppCommand>();
 
     let mut state = Box::new(AppState {
@@ -113,29 +121,32 @@ fn main() {
         last_tick: Instant::now(),
     });
 
+    // 启动配置文件热更新监听
     watcher::spawn_watcher(config_path, tx.clone());
 
     let instance = unsafe { GetModuleHandleW(None).unwrap() };
 
+    // 注册窗口类
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(wndproc),
         hInstance: instance.into(),
         hCursor: unsafe { LoadCursorW(None, IDC_HAND).unwrap() },
-        // 背景改由 WM_PAINT + 双缓冲统一绘制，避免系统先擦背景导致闪烁
+        // 背景由 WM_PAINT + 双缓冲统一绘制，hbrBackground 设为 null 避免闪烁
         hbrBackground: HBRUSH(null_mut()),
         lpszClassName: w!("CATIME_WINDOW"),
         ..Default::default()
     };
     unsafe { RegisterClassExW(&wc) };
 
+    // 创建主窗口
     let hwnd = unsafe {
         CreateWindowExW(
-            WS_EX_TOPMOST,
+            WS_EX_TOPMOST, // 置顶
             w!("CATIME_WINDOW"),
             w!("Catime"),
-            WS_OVERLAPPEDWINDOW & !WS_MAXIMIZEBOX,
+            WS_OVERLAPPEDWINDOW & !WS_MAXIMIZEBOX, // 禁止最大化
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             win_w,
@@ -154,12 +165,14 @@ fn main() {
         }
     };
 
+    // 创建系统托盘图标
     let _ = tray::create_tray(hwnd);
 
     unsafe {
         ShowWindow(hwnd, SW_SHOW);
     }
 
+    // Windows 消息主循环
     let mut msg = MSG::default();
     loop {
         let ret = unsafe { GetMessageW(&mut msg, None, 0, 0) };
