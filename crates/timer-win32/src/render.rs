@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush,
     DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, GetDC, GetDeviceCaps, GetStockObject,
     ReleaseDC, RoundRect, SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY,
-    CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DRAW_TEXT_FORMAT, DT_CENTER, DT_LEFT,
+    CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DRAW_TEXT_FORMAT, DT_CENTER,
     DT_SINGLELINE, DT_VCENTER, FW_NORMAL, HBRUSH, HDC, HFONT, LOGPIXELSY, OUT_DEFAULT_PRECIS,
     PAINTSTRUCT, SRCCOPY, TRANSPARENT, WHITE_BRUSH,
 };
@@ -24,15 +24,6 @@ pub enum ButtonHit {
     SwitchMode,
     None,
 }
-
-/// 倒计时对话框按钮点击结果
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CountdownDialogButtonHit {
-    Confirm,
-    Cancel,
-    None,
-}
-
 /// 渲染上下文：持有所有 GDI 字体句柄和 DPI 缩放因子。
 pub struct RenderContext {
     /// 时间显示大字（56pt）
@@ -272,48 +263,6 @@ pub fn paint(hwnd: HWND, render: &RenderContext, vs: &ViewState) {
     }
 }
 
-/// 绘制倒计时对话框（WM_PAINT 处理）。
-/// 同样使用双缓冲避免闪烁。
-pub fn paint_countdown_dialog(hwnd: HWND, render: &RenderContext, error_text: Option<&str>) {
-    unsafe {
-        let mut ps = PAINTSTRUCT::default();
-        let hdc = BeginPaint(hwnd, &mut ps);
-
-        let mut rect: RECT = Default::default();
-        let _ = GetClientRect(hwnd, &mut rect);
-        let w = rect.right - rect.left;
-        let h = rect.bottom - rect.top;
-        if w <= 0 || h <= 0 {
-            let _ = EndPaint(hwnd, &ps);
-            return;
-        }
-
-        let mem_dc = CreateCompatibleDC(hdc);
-        if mem_dc.0 == null_mut() {
-            draw_countdown_dialog_scene(hdc, render, w, h, error_text);
-            let _ = EndPaint(hwnd, &ps);
-            return;
-        }
-
-        let mem_bmp = CreateCompatibleBitmap(hdc, w, h);
-        if mem_bmp.0 == null_mut() {
-            let _ = DeleteDC(mem_dc);
-            draw_countdown_dialog_scene(hdc, render, w, h, error_text);
-            let _ = EndPaint(hwnd, &ps);
-            return;
-        }
-
-        let old_bmp = SelectObject(mem_dc, mem_bmp);
-        draw_countdown_dialog_scene(mem_dc, render, w, h, error_text);
-        let _ = BitBlt(hdc, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY);
-
-        let _ = SelectObject(mem_dc, old_bmp);
-        let _ = DeleteObject(mem_bmp);
-        let _ = DeleteDC(mem_dc);
-        let _ = EndPaint(hwnd, &ps);
-    }
-}
-
 /// 主窗口按钮点击测试：根据坐标判断点击了哪个按钮。
 pub fn hit_test_button(x: f32, y: f32, scale: f32) -> ButtonHit {
     let by = s(140, scale) as f32;
@@ -336,28 +285,6 @@ pub fn hit_test_button(x: f32, y: f32, scale: f32) -> ButtonHit {
     } else {
         ButtonHit::None
     }
-}
-
-/// 倒计时对话框按钮点击测试。
-pub fn hit_test_dialog_button(
-    x: f32,
-    y: f32,
-    scale: f32,
-    client_w: i32,
-) -> CountdownDialogButtonHit {
-    let layout = dialog_layout(scale, client_w);
-    if point_in_rect(x, y, &layout.btn_confirm) {
-        CountdownDialogButtonHit::Confirm
-    } else if point_in_rect(x, y, &layout.btn_cancel) {
-        CountdownDialogButtonHit::Cancel
-    } else {
-        CountdownDialogButtonHit::None
-    }
-}
-
-/// 判断坐标是否在矩形内。
-fn point_in_rect(x: f32, y: f32, r: &RECT) -> bool {
-    x >= r.left as f32 && x <= r.right as f32 && y >= r.top as f32 && y <= r.bottom as f32
 }
 
 /// 绘制主窗口的完整场景：模式标签 → 时间 → 状态 → 三个按钮。
@@ -390,7 +317,7 @@ fn draw_main_scene(hdc: HDC, render: &RenderContext, vs: &ViewState, w: i32, h: 
         let tc = match vs.status {
             TimerStatus::Finished => rgb(0xE0, 0x20, 0x20), // 红色：已结束
             TimerStatus::Paused => rgb(0x40, 0x40, 0x40),   // 深灰：暂停
-            _ => rgb(0x00, 0x00, 0x00),                      // 黑色：运行/就绪
+            _ => rgb(0x00, 0x00, 0x00),                     // 黑色：运行/就绪
         };
         SetTextColor(hdc, tc);
         let mut r = RECT {
@@ -470,95 +397,6 @@ fn draw_main_scene(hdc: HDC, render: &RenderContext, vs: &ViewState, w: i32, h: 
             sw,
             s(4, sc),
             df_center,
-        );
-    }
-}
-
-/// 绘制倒计时对话框场景：标题 → 副标题 → 输入框背景 → 提示 → 错误 → 按钮。
-fn draw_countdown_dialog_scene(
-    hdc: HDC,
-    render: &RenderContext,
-    w: i32,
-    h: i32,
-    error_text: Option<&str>,
-) {
-    let layout = dialog_layout(render.scale, w);
-    unsafe {
-        fill_window_bg(hdc, w, h);
-
-        // 标题
-        let mut title = layout.title;
-        SelectObject(hdc, render.font_title);
-        SetTextColor(hdc, rgb(0x10, 0x10, 0x10));
-        let mut ws = wide("设置倒计时");
-        DrawTextW(
-            hdc,
-            &mut ws,
-            &mut title,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        );
-
-        // 副标题：格式说明
-        let mut subtitle = layout.subtitle;
-        SelectObject(hdc, render.font_label);
-        SetTextColor(hdc, rgb(0x70, 0x70, 0x70));
-        let mut ws = wide("支持：秒数、MM:SS、HH:MM:SS");
-        DrawTextW(
-            hdc,
-            &mut ws,
-            &mut subtitle,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        );
-
-        // 输入框背景（EDIT 控件覆盖其上，此处只画背景和圆角边框）
-        let outline = CreateSolidBrush(rgb(0xF5, 0xF5, 0xF5));
-        FillRect(hdc, &layout.input, outline);
-        RoundRect(
-            hdc,
-            layout.input.left,
-            layout.input.top,
-            layout.input.right,
-            layout.input.bottom,
-            s(6, render.scale),
-            s(6, render.scale),
-        );
-        let _ = DeleteObject(outline);
-
-        // 提示文本
-        let mut hint = layout.hint;
-        SelectObject(hdc, render.font_label);
-        SetTextColor(hdc, rgb(0x88, 0x88, 0x88));
-        let mut ws = wide("例如：1500、25:00、01:25:00");
-        DrawTextW(
-            hdc,
-            &mut ws,
-            &mut hint,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-        );
-
-        // 错误文本（红色）
-        let mut err = layout.error;
-        let err_txt = error_text.unwrap_or("");
-        let mut ws = wide(err_txt);
-        SetTextColor(hdc, rgb(0xD0, 0x20, 0x20));
-        DrawTextW(hdc, &mut ws, &mut err, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-        // 确定 / 取消按钮
-        draw_button(
-            hdc,
-            render.font_btn,
-            layout.btn_confirm,
-            "确定",
-            s(6, render.scale),
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        );
-        draw_button(
-            hdc,
-            render.font_btn,
-            layout.btn_cancel,
-            "取消",
-            s(6, render.scale),
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
         );
     }
 }

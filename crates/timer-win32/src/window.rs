@@ -214,7 +214,7 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             LRESULT(0)
         }
 
-        /// DPI 变更（窗口被拖到不同 DPI 的显示器）：重建字体并调整窗口大小。
+        // DPI 变更（窗口被拖到不同 DPI 的显示器）：重建字体并调整窗口大小。
         WM_DPICHANGED => {
             let Some(state) = try_get_state(hwnd) else {
                 return DefWindowProcW(hwnd, msg, wparam, lparam);
