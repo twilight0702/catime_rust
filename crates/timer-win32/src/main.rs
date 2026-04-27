@@ -148,10 +148,10 @@ fn main() {
     // 创建主窗口
     let hwnd = unsafe {
         CreateWindowExW(
-            WS_EX_TOPMOST, // 置顶
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW, // 置顶 + 不在任务栏显示
             w!("CATIME_WINDOW"),
             w!("Catime"),
-            WS_OVERLAPPEDWINDOW & !WS_MAXIMIZEBOX, // 禁止最大化
+            WS_POPUP, // 无标题栏、无边框
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             win_w,

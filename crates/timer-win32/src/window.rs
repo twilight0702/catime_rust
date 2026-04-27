@@ -10,6 +10,7 @@ use timer_app::AppController;
 use timer_core::{AppCommand, AppEvent, TimerStatus};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::countdown_dialog;
@@ -153,7 +154,18 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     let events = state.controller.handle(AppCommand::SwitchMode(new_mode));
                     process_events(hwnd, state, &events);
                 }
-                ButtonHit::None => {}
+                ButtonHit::None => {
+                    // 点击空白区域 → 拖动无标题栏窗口
+                    unsafe {
+                        let _ = ReleaseCapture();
+                        PostMessageW(
+                            hwnd,
+                            WM_NCLBUTTONDOWN,
+                            WPARAM(HTCAPTION as usize),
+                            LPARAM(0),
+                        );
+                    }
+                }
             }
             InvalidateRect(hwnd, None, false).ok();
             LRESULT(0)
