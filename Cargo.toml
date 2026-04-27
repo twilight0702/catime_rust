@@ -5,7 +5,7 @@ members = [
     "crates/timer-storage",
     "crates/timer-app",
     "crates/timer-win32",
-    "crates/timer-tauri",
+    "crates/timer-egui",
 ]
 
 [workspace.package]
@@ -22,6 +22,9 @@ toml = "0.8"
 ctrlc = "3"
 notify = "7"
 image = "0.25"
+egui = "0.33"
+eframe = "0.33"
+tray-icon = "0.22"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-build = "2"
 serde_json = "1"
