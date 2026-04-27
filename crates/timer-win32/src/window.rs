@@ -239,6 +239,12 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             LRESULT(0)
         }
 
+        // Ctrl+C 自定义关闭消息 → 销毁窗口并退出程序
+        msg if msg == crate::WM_CTRLC_SHUTDOWN => {
+            let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+
         // 关闭按钮 → 隐藏窗口（不退出）
         WM_CLOSE => {
             let Some(state) = try_get_state(hwnd) else {

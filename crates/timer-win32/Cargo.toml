@@ -17,6 +17,7 @@ windows = { version = "0.58", features = [
     "Win32_UI_HiDpi",
     "Win32_System_LibraryLoader",
 ] }
+ctrlc.workspace = true
 log.workspace = true
 env_logger.workspace = true
 notify.workspace = true

@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+ctrlc.workspace = true
 env_logger.workspace = true
 log.workspace = true
 eframe.workspace = true

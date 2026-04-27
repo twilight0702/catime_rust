@@ -2,7 +2,8 @@
 //! 使用 raw Win32 API (`windows` crate) 创建窗口、系统托盘和消息循环。
 //! 不使用任何 UI 框架，直接调用 GDI 渲染。
 
-#![windows_subsystem = "windows"]
+// 仅在 release 构建中使用 windows 子系统，debug/cargo run 时使用 console 子系统以支持 Ctrl+C
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(unused_must_use)]
 
 mod countdown_dialog;
@@ -20,6 +21,7 @@ use std::ptr::null_mut;
 use timer_app::AppController;
 use timer_storage::{ConfigRepository, TomlConfigRepository};
 use windows::core::w;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -28,6 +30,9 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use window::{wndproc, AppState};
+
+/// Ctrl+C → 优雅退出 的自定义窗口消息
+pub const WM_CTRLC_SHUTDOWN: u32 = WM_USER + 1;
 
 const ERROR_LOG_FILE: &str = "catime_error.log";
 
@@ -167,6 +172,14 @@ fn main() {
 
     // 创建系统托盘图标
     let _ = tray::create_tray(hwnd);
+
+    // 注册 Ctrl+C 处理器，通过自定义消息优雅退出
+    let hwnd_val = hwnd.0 as isize;
+    ctrlc::set_handler(move || {
+        log::info!("Ctrl+C received, shutting down gracefully");
+        unsafe { PostMessageW(HWND(hwnd_val as *mut _), WM_CTRLC_SHUTDOWN, WPARAM(0), LPARAM(0)) };
+    })
+    .expect("failed to register Ctrl+C handler");
 
     unsafe {
         ShowWindow(hwnd, SW_SHOW);

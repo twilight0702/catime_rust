@@ -61,6 +61,13 @@ fn main() {
     // 初始化日志系统
     env_logger::init();
 
+    // Ctrl+C 优雅退出
+    ctrlc::set_handler(|| {
+        log::info!("Ctrl+C received, exiting");
+        std::process::exit(0);
+    })
+    .expect("failed to register Ctrl+C handler");
+
     // 加载配置文件
     let config_path = match TomlConfigRepository::default_path() {
         Ok(p) => p,
