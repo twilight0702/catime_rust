@@ -1,6 +1,11 @@
-# Catime — Rust 轻量级 Windows 计时器
+# Catime_rust — Rust 轻量级 Windows 计时器
 
-常驻系统托盘的桌面计时器，支持正计时 / 倒计时，使用 Rust 编写。
+<div align="center">
+  <img src="assets/icon.png" width="400" alt="Catime Logo">
+</div>
+
+
+仿 [Catime](https://github.com/vladelaina/Catime) 的 Rust 版本实现，为常驻系统托盘的桌面计时器，支持正计时 / 倒计时等
 
 ## 功能
 
