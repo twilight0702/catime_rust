@@ -73,23 +73,32 @@ fn create_hicon() -> HICON {
 
 /// 创建系统托盘图标。
 /// 托盘消息通过 `WM_APP_TRAY` 发送到 `hwnd` 的窗口过程。
-pub fn create_tray(hwnd: HWND) -> Result<(), windows::core::Error> {
+pub fn create_tray(
+    hwnd: HWND,
+    show_tooltip: bool,
+) -> Result<(), windows::core::Error> {
     let hicon = create_hicon();
 
     let tip = windows::core::w!("Catime\0");
+    let mut flags = NIF_ICON | NIF_MESSAGE;
+    if show_tooltip {
+        flags |= NIF_TIP;
+    }
     let mut nid = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hwnd,
         uID: 1,
-        uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
+        uFlags: flags,
         uCallbackMessage: WM_APP_TRAY,
         hIcon: hicon,
         ..Default::default()
     };
-    // szTip 是固定 128 元素数组，需手动拷贝
-    let tip_bytes = unsafe { tip.as_wide() };
-    let len = tip_bytes.len().min(127);
-    nid.szTip[..len].copy_from_slice(&tip_bytes[..len]);
+    if show_tooltip {
+        // szTip 是固定 128 元素数组，需手动拷贝
+        let tip_bytes = unsafe { tip.as_wide() };
+        let len = tip_bytes.len().min(127);
+        nid.szTip[..len].copy_from_slice(&tip_bytes[..len]);
+    }
 
     let ok = unsafe { Shell_NotifyIconW(NIM_ADD, &mut nid) };
     if ok.as_bool() {

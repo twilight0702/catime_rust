@@ -1,5 +1,5 @@
 use timer_core::{AppCommand, AppEvent, TimerEngine, ViewState};
-use timer_storage::{AppConfig, ConfigRepository};
+use timer_storage::{AppConfig, ConfigRepository, TrayLeftClickAction};
 
 /// 应用协调层：接收命令 → 分发到引擎 → 更新 ViewState。
 ///
@@ -53,18 +53,29 @@ impl AppController {
             | AppCommand::Pause
             | AppCommand::Resume
             | AppCommand::Reset
-            | AppCommand::Tick
-            | AppCommand::SetCountdown(_)
-            | AppCommand::SwitchMode(_) => self.handle_timer_command(cmd),
+            | AppCommand::Tick => self.handle_timer_command(cmd),
+            AppCommand::SetCountdown(_) | AppCommand::SwitchMode(_) => {
+                let events = self.handle_timer_command(cmd);
+                self.persist_runtime_config();
+                events
+            }
 
             // 窗口控制命令 → 直接处理
             AppCommand::ToggleWindow => self.handle_toggle_window(),
             AppCommand::ShowWindow => self.handle_show_window(),
             AppCommand::HideWindow => self.handle_hide_window(),
+            AppCommand::TrayLeftClick => self.handle_tray_left_click(),
 
             // 系统命令
             AppCommand::ReloadConfig => self.handle_reload_config(),
             AppCommand::Quit => vec![AppEvent::AppShouldQuit],
+        }
+    }
+
+    /// 将运行时关键修改即时落盘，避免异常退出导致配置丢失。
+    fn persist_runtime_config(&self) {
+        if let Err(e) = self.save_config() {
+            log::error!("save config after runtime mutation failed: {}", e);
         }
     }
 
@@ -87,6 +98,15 @@ impl AppController {
             }
         };
 
+        log::info!(
+            "reload: old duration={} mode={:?}, new duration={} mode={:?}, engine status={:?}",
+            self.config.duration_secs,
+            self.config.mode,
+            new_config.duration_secs,
+            new_config.mode,
+            self.engine.status,
+        );
+
         let mut events = Vec::new();
 
         // 模式变更 → 发送 SwitchMode
@@ -107,12 +127,18 @@ impl AppController {
 
         self.sync_view_state(&events);
 
+        log::info!(
+            "reload: new display_time={} remaining={} duration={}",
+            self.view_state.display_time,
+            self.engine.remaining_secs,
+            self.engine.countdown_duration_secs,
+        );
+
         // 确保至少有一次 UI 刷新
         if events.is_empty() {
             events.push(AppEvent::TimerUpdated);
         }
 
-        log::info!("config reloaded");
         events
     }
 
@@ -122,11 +148,19 @@ impl AppController {
     }
 
     /// 更新窗口位置和尺寸（由 UI 层在窗口移动/缩放时调用）。
-    pub fn update_window_bounds(&mut self, x: i32, y: i32, width: u32, height: u32) {
+    pub fn update_window_bounds(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        dpi: Option<u32>,
+    ) {
         self.config.window.x = x;
         self.config.window.y = y;
         self.config.window.width = width;
         self.config.window.height = height;
+        self.config.window.dpi = dpi;
     }
 
     /// 根据引擎事件同步 ViewState。
@@ -179,6 +213,15 @@ impl AppController {
             vec![AppEvent::WindowShouldHide]
         } else {
             Vec::new()
+        }
+    }
+
+    /// 处理托盘左键：行为由配置 `tray.left_click_action` 决定。
+    fn handle_tray_left_click(&mut self) -> Vec<AppEvent> {
+        match self.config.tray.left_click_action {
+            TrayLeftClickAction::ToggleWindow => self.handle_toggle_window(),
+            TrayLeftClickAction::ShowWindow => self.handle_show_window(),
+            TrayLeftClickAction::Nothing => Vec::new(),
         }
     }
 

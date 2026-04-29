@@ -1,18 +1,16 @@
 //! 配置文件热更新监听模块（Win32 版）。
-//! 使用 `notify` crate 监听 `config.toml` 文件变更，经防抖后发送重载命令。
+//! 使用 `notify` crate 监听 `config.toml` 所在目录的文件变更，防抖后发送重载命令。
 
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecursiveMode, Watcher};
 
 use timer_core::AppCommand;
 
 /// 启动配置文件监听线程。
-/// 检测到 `config.toml` 变更后，经 300ms 防抖，发送 `AppCommand::ReloadConfig`。
 pub fn spawn_watcher(config_path: PathBuf, cmd_tx: mpsc::Sender<AppCommand>) {
-    // 监听父目录（因为编辑器可能通过 rename+write 保存）
     let parent = match config_path.parent() {
         Some(p) => p.to_path_buf(),
         None => {
@@ -27,7 +25,29 @@ pub fn spawn_watcher(config_path: PathBuf, cmd_tx: mpsc::Sender<AppCommand>) {
         .expect("failed to spawn config watcher thread");
 }
 
-/// 监听线程主循环。
+/// 判断事件是否与目标配置文件相关。
+/// 使用 `canonicalize` 做鲁棒的路径比较（兼容相对/绝对路径、大小写等差异）。
+fn paths_match(event_path: &std::path::Path, config_path: &std::path::Path) -> bool {
+    // 快速路径：直接相等
+    if event_path == config_path {
+        return true;
+    }
+    // Canonicalize 比较（处理符号链接、大小写等）
+    if let (Ok(a), Ok(b)) = (event_path.canonicalize(), config_path.canonicalize()) {
+        return a == b;
+    }
+    false
+}
+
+fn is_relevant(event: &notify::Event, config_path: &std::path::Path) -> bool {
+    let kind_match = matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_));
+    if !kind_match {
+        return false;
+    }
+    event.paths.iter().any(|p| paths_match(p, config_path))
+}
+
+/// 监听线程主循环：100ms 轮询，300ms 防抖窗口。
 fn run_watcher(watch_dir: PathBuf, config_path: PathBuf, cmd_tx: mpsc::Sender<AppCommand>) {
     let (evt_tx, evt_rx) = mpsc::channel();
 
@@ -46,48 +66,52 @@ fn run_watcher(watch_dir: PathBuf, config_path: PathBuf, cmd_tx: mpsc::Sender<Ap
         return;
     }
 
-    log::info!("hot-reload active, watching: {}", config_path.display());
+    log::info!(
+        "hot-reload active, watching dir: {}, target: {}",
+        watch_dir.display(),
+        config_path.display()
+    );
+
+    let mut last_relevant: Option<Instant> = None;
 
     loop {
-        // 阻塞等待第一个文件变更事件
-        let event = match evt_rx.recv() {
-            Ok(Ok(event)) => event,
+        match evt_rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(Ok(event)) if is_relevant(&event, &config_path) => {
+                log::debug!(
+                    "watcher: relevant event kind={:?} paths={:?}",
+                    event.kind,
+                    event.paths
+                );
+                last_relevant = Some(Instant::now());
+            }
+            Ok(Ok(event)) => {
+                // 无关事件，记录以便排查
+                log::trace!(
+                    "watcher: ignored event kind={:?} paths={:?}",
+                    event.kind,
+                    event.paths
+                );
+            }
             Ok(Err(e)) => {
-                log::debug!("file watcher event error: {}", e);
-                continue;
+                log::debug!("watcher: event error: {}", e);
             }
-            Err(_) => break,
-        };
-
-        // 只处理目标配置文件的 Modify / Create 事件
-        if !is_relevant_event(&event, &config_path) {
-            continue;
-        }
-
-        // 防抖循环：300ms 内收到新事件则重置计时，超时则触发重载
-        loop {
-            match evt_rx.recv_timeout(Duration::from_millis(300)) {
-                Ok(Ok(e)) if !is_relevant_event(&e, &config_path) => continue,
-                Ok(Ok(_)) => continue, // 收到新事件，重置计时
-                Ok(Err(e)) => {
-                    log::debug!("file watcher event error: {}", e);
-                    continue;
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if let Some(ts) = last_relevant {
+                    let elapsed = ts.elapsed();
+                    if elapsed >= Duration::from_millis(300) {
+                        log::info!(
+                            "config changed (debounced after {:?}), triggering reload",
+                            elapsed
+                        );
+                        if cmd_tx.send(AppCommand::ReloadConfig).is_err() {
+                            log::info!("watcher: main thread disconnected, exiting");
+                            break;
+                        }
+                        last_relevant = None;
+                    }
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => break, // 静默期结束 → 触发
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-
-        log::info!("config changed, triggering reload");
-        let _ = cmd_tx.send(AppCommand::ReloadConfig);
     }
-}
-
-/// 判断文件系统事件是否与目标配置文件相关。
-fn is_relevant_event(event: &notify::Event, config_path: &PathBuf) -> bool {
-    let path_matches = event.paths.iter().any(|p| p == config_path);
-    if !path_matches {
-        return false;
-    }
-    matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
 }

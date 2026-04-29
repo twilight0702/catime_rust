@@ -29,6 +29,8 @@ pub enum AppCommand {
     ShowWindow,
     /// 隐藏窗口
     HideWindow,
+    /// 托盘左键点击（由配置决定具体行为）
+    TrayLeftClick,
 
     // --- 系统 ---
     /// 重新加载配置文件

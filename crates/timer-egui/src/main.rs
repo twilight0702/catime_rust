@@ -103,11 +103,18 @@ fn main() {
     // 在主线程创建托盘，与 eframe 共用 Windows 消息泵
     // Box::leak 确保托盘句柄在程序整个生命周期内有效
     #[cfg(windows)]
-    let _tray = Box::leak(Box::new(tray::create_tray(tx.clone())));
+    let _tray = Box::leak(Box::new(tray::create_tray(
+        tx.clone(),
+        config.tray.show_remaining_tooltip,
+    )));
 
-    // 启动配置文件热更新监听线程
-    #[cfg(windows)]
+    // 按配置决定是否启动热更新监听
+    if config.hot_reload {
+        #[cfg(windows)]
     watcher::spawn_watcher(config_path, tx.clone());
+    } else {
+        log::info!("hot-reload disabled by config");
+    }
 
     let controller = AppController::new(config, Box::new(config_repo));
 

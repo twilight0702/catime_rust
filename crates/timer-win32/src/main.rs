@@ -21,11 +21,12 @@ use std::ptr::null_mut;
 use timer_app::AppController;
 use timer_storage::{ConfigRepository, TomlConfigRepository};
 use windows::core::w;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::Graphics::Gdi::HBRUSH;
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
+use windows::Win32::Graphics::Gdi::{MonitorFromPoint, HBRUSH, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
-    GetDpiForSystem, SetProcessDpiAwareness, PROCESS_PER_MONITOR_DPI_AWARE,
+    GetDpiForMonitor, GetDpiForSystem, SetProcessDpiAwareness, MDT_EFFECTIVE_DPI,
+    PROCESS_PER_MONITOR_DPI_AWARE,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -81,6 +82,22 @@ fn install_panic_hook() {
     }));
 }
 
+fn dpi_for_point(x: i32, y: i32) -> u32 {
+    unsafe {
+        let monitor = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
+        if monitor.0.is_null() {
+            return GetDpiForSystem();
+        }
+        let mut dpi_x = 0u32;
+        let mut dpi_y = 0u32;
+        if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y).is_ok() {
+            dpi_x.max(1)
+        } else {
+            GetDpiForSystem()
+        }
+    }
+}
+
 fn main() {
     append_error_file("INFO", "catime startup");
     install_panic_hook();
@@ -126,8 +143,12 @@ fn main() {
         last_tick: Instant::now(),
     });
 
-    // 启动配置文件热更新监听
-    watcher::spawn_watcher(config_path, tx.clone());
+    // 按配置决定是否启动热更新监听
+    if state.controller.config().hot_reload {
+        watcher::spawn_watcher(config_path, tx.clone());
+    } else {
+        log::info!("hot-reload disabled by config");
+    }
 
     let instance = unsafe { GetModuleHandleW(None).unwrap() };
 
@@ -145,17 +166,45 @@ fn main() {
     };
     unsafe { RegisterClassExW(&wc) };
 
-    // 创建主窗口
+    let (init_x, init_y, init_w, init_h, normalize_window_config) = {
+        let cfg = state.controller.config();
+        let target_dpi = dpi_for_point(cfg.window.x, cfg.window.y).max(1);
+        let source_dpi = cfg.window.dpi.unwrap_or(target_dpi).max(1);
+        let scaled_w = ((cfg.window.width as u64) * (target_dpi as u64) / (source_dpi as u64))
+            .max(1)
+            .min(i32::MAX as u64) as i32;
+        let scaled_h = ((cfg.window.height as u64) * (target_dpi as u64) / (source_dpi as u64))
+            .max(1)
+            .min(i32::MAX as u64) as i32;
+        let min_w = win_w.max(1);
+        let min_h = win_h.max(1);
+        let req_w = scaled_w;
+        let req_h = scaled_h;
+        let w = if cfg.window.width == 0 {
+            min_w
+        } else {
+            req_w.max(min_w)
+        };
+        let h = if cfg.window.height == 0 {
+            min_h
+        } else {
+            req_h.max(min_h)
+        };
+        let normalized = req_w != w || req_h != h || cfg.window.dpi != Some(target_dpi);
+        (cfg.window.x, cfg.window.y, w, h, normalized)
+    };
+
+    // 创建主窗口（优先使用配置中的窗口位置与尺寸）
     let hwnd = unsafe {
         CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW, // 置顶 + 不在任务栏显示
             w!("CATIME_WINDOW"),
             w!("Catime"),
             WS_POPUP, // 无标题栏、无边框
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            win_w,
-            win_h,
+            init_x,
+            init_y,
+            init_w,
+            init_h,
             None,
             None,
             instance,
@@ -170,8 +219,24 @@ fn main() {
         }
     };
 
+    // 旧版本过小窗口尺寸（如 300x120）迁移为当前最小可用尺寸并持久化。
+    if normalize_window_config {
+        state
+            .controller
+            .update_window_bounds(
+                init_x,
+                init_y,
+                init_w as u32,
+                init_h as u32,
+                Some(dpi_for_point(init_x, init_y)),
+            );
+        if let Err(e) = state.controller.save_config() {
+            log::error!("save normalized window size failed: {}", e);
+        }
+    }
+
     // 创建系统托盘图标
-    let _ = tray::create_tray(hwnd);
+    let _ = tray::create_tray(hwnd, state.controller.config().tray.show_remaining_tooltip);
 
     // 注册 Ctrl+C 处理器，通过自定义消息优雅退出
     let hwnd_val = hwnd.0 as isize;

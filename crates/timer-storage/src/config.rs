@@ -32,6 +32,9 @@ pub struct WindowConfig {
     pub width: u32,
     /// 窗口高度（像素）
     pub height: u32,
+    /// 记录窗口尺寸时的 DPI（用于跨屏恢复尺寸）
+    #[serde(default)]
+    pub dpi: Option<u32>,
     /// 是否锁定窗口位置（禁止拖动）
     pub locked: bool,
 }
@@ -41,8 +44,9 @@ impl Default for WindowConfig {
         Self {
             x: 100,
             y: 100,
-            width: 300,
-            height: 120,
+            width: 320,
+            height: 220,
+            dpi: None,
             locked: false,
         }
     }

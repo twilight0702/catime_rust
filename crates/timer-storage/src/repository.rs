@@ -24,8 +24,21 @@ impl TomlConfigRepository {
         Self { path }
     }
 
-    /// 返回可执行文件同目录下的默认路径 `{exe_dir}/config.toml`。
+    /// 返回默认配置路径。
+    ///
+    /// 路径优先级：
+    /// 1) 若当前工作目录下同时存在 `Cargo.toml` 和 `config.toml`，优先使用工作目录的 `config.toml`
+    ///    （便于 `cargo run` 开发调试时读取项目根配置）
+    /// 2) 否则使用可执行文件同目录 `{exe_dir}/config.toml`
     pub fn default_path() -> anyhow::Result<PathBuf> {
+        if let Ok(cwd) = std::env::current_dir() {
+            let cargo_toml = cwd.join("Cargo.toml");
+            let config_toml = cwd.join("config.toml");
+            if cargo_toml.exists() && config_toml.exists() {
+                return Ok(config_toml);
+            }
+        }
+
         let mut exe_dir = std::env::current_exe().context("failed to get executable path")?;
         exe_dir.pop(); // 去掉可执行文件名，保留目录
         Ok(exe_dir.join("config.toml"))

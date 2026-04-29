@@ -1,19 +1,20 @@
-mode = "countdown"
-duration_secs = 1500
+mode = "stopwatch"
+duration_secs = 1010
 always_on_top = false
-opacity = 0.85
+opacity = 0.8500000238418579
 hot_reload = true
 
 [window]
-x = 100
-y = 100
-width = 300
-height = 120
+x = 727
+y = -779
+width = 720
+height = 495
+dpi = 96
 locked = false
 
 [font]
 family = "Segoe UI"
-size = 56
+size = 56.0
 color = "#FFFFFF"
 
 [tray]

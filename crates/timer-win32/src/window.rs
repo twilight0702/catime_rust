@@ -8,8 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use timer_app::AppController;
 use timer_core::{AppCommand, AppEvent, TimerStatus};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -175,12 +176,12 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
         msg if msg == tray::WM_APP_TRAY => {
             let lo = (lparam.0 & 0xFFFF) as u32;
             match lo {
-                // 左键点击托盘图标 → 显示窗口
+                // 左键点击托盘图标 → 按配置执行
                 WM_LBUTTONUP => {
                     let Some(state) = try_get_state(hwnd) else {
                         return DefWindowProcW(hwnd, msg, wparam, lparam);
                     };
-                    let events = state.controller.handle(AppCommand::ShowWindow);
+                    let events = state.controller.handle(AppCommand::TrayLeftClick);
                     process_events(hwnd, state, &events);
                 }
                 // 右键点击托盘图标 → 弹出菜单
@@ -226,6 +227,15 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             LRESULT(0)
         }
 
+        // 拖拽/缩放结束：记忆窗口位置与尺寸
+        WM_EXITSIZEMOVE => {
+            let Some(state) = try_get_state(hwnd) else {
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
+            };
+            persist_window_bounds(hwnd, state);
+            LRESULT(0)
+        }
+
         // DPI 变更（窗口被拖到不同 DPI 的显示器）：重建字体并调整窗口大小。
         WM_DPICHANGED => {
             let Some(state) = try_get_state(hwnd) else {
@@ -246,6 +256,7 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 SWP_NOZORDER | SWP_NOACTIVATE,
             )
             .ok();
+            persist_window_bounds(hwnd, state);
 
             InvalidateRect(hwnd, None, false).ok();
             LRESULT(0)
@@ -301,6 +312,29 @@ fn drain_commands(hwnd: HWND, state: &mut AppState) {
         };
         let events = state.controller.handle(cmd);
         process_events(hwnd, state, &events);
+    }
+}
+
+/// 读取当前窗口矩形并写回配置，随后立即持久化。
+fn persist_window_bounds(hwnd: HWND, state: &mut AppState) {
+    unsafe {
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            let width = (rect.right - rect.left).max(1) as u32;
+            let height = (rect.bottom - rect.top).max(1) as u32;
+            state
+                .controller
+                .update_window_bounds(
+                    rect.left,
+                    rect.top,
+                    width,
+                    height,
+                    Some(GetDpiForWindow(hwnd).max(1)),
+                );
+            if let Err(e) = state.controller.save_config() {
+                log::error!("save config after window move/resize failed: {}", e);
+            }
+        }
     }
 }
 
@@ -364,8 +398,18 @@ fn apply_countdown_setting(hwnd: HWND) {
         ),
     );
 
+    // 记录托盘点击附近坐标，使对话框出现在托盘位置边上
+    let mut cursor = POINT::default();
+    let anchor = unsafe {
+        if GetCursorPos(&mut cursor).is_ok() {
+            Some((cursor.x, cursor.y))
+        } else {
+            None
+        }
+    };
+
     // 弹出对话框
-    if let Some(secs) = countdown_dialog::prompt_countdown_seconds(owner, current) {
+    if let Some(secs) = countdown_dialog::prompt_countdown_seconds(owner, current, anchor) {
         append_error_file(
             "INFO",
             &format!("apply_countdown_setting: dialog returned secs={}", secs),

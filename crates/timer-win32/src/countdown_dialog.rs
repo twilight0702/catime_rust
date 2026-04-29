@@ -90,7 +90,12 @@ fn append_error_file(level: &str, msg: &str) {
 ///
 /// `parent`：父窗口句柄，对话框将居中显示在其上方。
 /// `current_secs`：当前倒计时秒数，用于预填输入框。
-pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> {
+/// `anchor`：可选锚点坐标（屏幕坐标），传入时优先在该点附近弹出。
+pub fn prompt_countdown_seconds(
+    parent: HWND,
+    current_secs: u64,
+    anchor: Option<(i32, i32)>,
+) -> Option<u64> {
     static REGISTER_ONCE: Once = Once::new();
 
     unsafe {
@@ -122,8 +127,10 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
         let result = Arc::new(Mutex::new(None));
         let done = Arc::new(AtomicBool::new(false));
 
-        // 计算对话框位置（居中于父窗口或屏幕默认位置）
-        let (x, y) = if parent.0.is_null() {
+        // 计算对话框位置（优先锚点，其次父窗口居中，最后固定位置）
+        let (x, y) = if let Some((ax, ay)) = anchor {
+            place_near_anchor(ax, ay, width, height)
+        } else if parent.0.is_null() {
             (200, 160)
         } else {
             let mut parent_rect = RECT::default();
@@ -209,6 +216,30 @@ pub fn prompt_countdown_seconds(parent: HWND, current_secs: u64) -> Option<u64> 
         let out = result.lock().ok().and_then(|g| *g);
         log_warn(&format!("prompt_countdown_seconds: return {:?}", out));
         out
+    }
+}
+
+/// 将对话框放在锚点右下侧，并限制在主屏幕可见区域内。
+fn place_near_anchor(
+    anchor_x: i32,
+    anchor_y: i32,
+    dialog_w: i32,
+    dialog_h: i32,
+) -> (i32, i32) {
+    unsafe {
+        let screen_w = GetSystemMetrics(SM_CXSCREEN).max(1);
+        let screen_h = GetSystemMetrics(SM_CYSCREEN).max(1);
+        let margin = 8;
+
+        let mut x = anchor_x + 12;
+        let mut y = anchor_y + 12;
+
+        let max_x = (screen_w - dialog_w - margin).max(margin);
+        let max_y = (screen_h - dialog_h - margin).max(margin);
+        x = x.clamp(margin, max_x);
+        y = y.clamp(margin, max_y);
+
+        (x, y)
     }
 }
 
