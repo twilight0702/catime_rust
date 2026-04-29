@@ -322,15 +322,13 @@ fn persist_window_bounds(hwnd: HWND, state: &mut AppState) {
         if GetWindowRect(hwnd, &mut rect).is_ok() {
             let width = (rect.right - rect.left).max(1) as u32;
             let height = (rect.bottom - rect.top).max(1) as u32;
-            state
-                .controller
-                .update_window_bounds(
-                    rect.left,
-                    rect.top,
-                    width,
-                    height,
-                    Some(GetDpiForWindow(hwnd).max(1)),
-                );
+            state.controller.update_window_bounds(
+                rect.left,
+                rect.top,
+                width,
+                height,
+                Some(GetDpiForWindow(hwnd).max(1)),
+            );
             if let Err(e) = state.controller.save_config() {
                 log::error!("save config after window move/resize failed: {}", e);
             }

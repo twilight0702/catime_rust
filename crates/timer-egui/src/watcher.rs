@@ -30,11 +30,7 @@ pub fn spawn_watcher(config_path: PathBuf, cmd_tx: mpsc::Sender<AppCommand>) {
 }
 
 /// 监听线程主循环。
-fn run_watcher(
-    watch_dir: PathBuf,
-    config_path: PathBuf,
-    cmd_tx: mpsc::Sender<AppCommand>,
-) {
+fn run_watcher(watch_dir: PathBuf, config_path: PathBuf, cmd_tx: mpsc::Sender<AppCommand>) {
     // 创建内部通道转发 notify 事件
     let (evt_tx, evt_rx) = mpsc::channel();
 
@@ -93,16 +89,10 @@ fn run_watcher(
 
 /// 判断文件系统事件是否与目标配置文件相关。
 /// 仅 `Modify` 或 `Create` 且路径完全匹配时才返回 true。
-fn is_relevant_event(
-    event: &notify::Event,
-    config_path: &PathBuf,
-) -> bool {
+fn is_relevant_event(event: &notify::Event, config_path: &PathBuf) -> bool {
     let path_matches = event.paths.iter().any(|p| p == config_path);
     if !path_matches {
         return false;
     }
-    matches!(
-        event.kind,
-        EventKind::Modify(_) | EventKind::Create(_)
-    )
+    matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
 }

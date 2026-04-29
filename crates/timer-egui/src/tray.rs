@@ -17,17 +17,13 @@ fn create_icon() -> Icon {
     let (width, height) = img.dimensions();
     let rgba = img.into_raw();
 
-    Icon::from_rgba(rgba, width, height)
-        .expect("failed to create tray icon from rgba")
+    Icon::from_rgba(rgba, width, height).expect("failed to create tray icon from rgba")
 }
 
 /// 创建托盘图标并设置事件回调。
 /// 必须在主线程调用以共享 Windows 消息泵。
 /// 返回的 `TrayIcon` 句柄须保持存活（`Box::leak`），否则图标会消失。
-pub fn create_tray(
-    tx: mpsc::Sender<AppCommand>,
-    show_tooltip: bool,
-) -> tray_icon::TrayIcon {
+pub fn create_tray(tx: mpsc::Sender<AppCommand>, show_tooltip: bool) -> tray_icon::TrayIcon {
     let icon = create_icon();
 
     // 构建右键菜单
@@ -40,7 +36,9 @@ pub fn create_tray(
     menu.append(&MenuItem::new("显示/隐藏", true, None)).ok();
     menu.append(&MenuItem::new("退出", true, None)).ok();
 
-    let mut builder = TrayIconBuilder::new().with_icon(icon).with_menu(Box::new(menu));
+    let mut builder = TrayIconBuilder::new()
+        .with_icon(icon)
+        .with_menu(Box::new(menu));
     if show_tooltip {
         builder = builder.with_tooltip("Catime");
     }

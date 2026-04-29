@@ -220,12 +220,7 @@ pub fn prompt_countdown_seconds(
 }
 
 /// 将对话框放在锚点右下侧，并限制在主屏幕可见区域内。
-fn place_near_anchor(
-    anchor_x: i32,
-    anchor_y: i32,
-    dialog_w: i32,
-    dialog_h: i32,
-) -> (i32, i32) {
+fn place_near_anchor(anchor_x: i32, anchor_y: i32, dialog_w: i32, dialog_h: i32) -> (i32, i32) {
     unsafe {
         let screen_w = GetSystemMetrics(SM_CXSCREEN).max(1);
         let screen_h = GetSystemMetrics(SM_CYSCREEN).max(1);

@@ -221,15 +221,13 @@ fn main() {
 
     // 旧版本过小窗口尺寸（如 300x120）迁移为当前最小可用尺寸并持久化。
     if normalize_window_config {
-        state
-            .controller
-            .update_window_bounds(
-                init_x,
-                init_y,
-                init_w as u32,
-                init_h as u32,
-                Some(dpi_for_point(init_x, init_y)),
-            );
+        state.controller.update_window_bounds(
+            init_x,
+            init_y,
+            init_w as u32,
+            init_h as u32,
+            Some(dpi_for_point(init_x, init_y)),
+        );
         if let Err(e) = state.controller.save_config() {
             log::error!("save normalized window size failed: {}", e);
         }
@@ -242,7 +240,14 @@ fn main() {
     let hwnd_val = hwnd.0 as isize;
     ctrlc::set_handler(move || {
         log::info!("Ctrl+C received, shutting down gracefully");
-        unsafe { PostMessageW(HWND(hwnd_val as *mut _), WM_CTRLC_SHUTDOWN, WPARAM(0), LPARAM(0)) };
+        unsafe {
+            PostMessageW(
+                HWND(hwnd_val as *mut _),
+                WM_CTRLC_SHUTDOWN,
+                WPARAM(0),
+                LPARAM(0),
+            )
+        };
     })
     .expect("failed to register Ctrl+C handler");
 

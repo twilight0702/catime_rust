@@ -41,7 +41,7 @@ fn setup_cjk_fonts() -> FontDefinitions {
             log::info!("loaded CJK font: {}", path);
             let mut font_data = FontData::from_owned(data);
             font_data.index = 0; // 使用字体的第一个 face
-            // 注册为 "CJK" 字体数据
+                                 // 注册为 "CJK" 字体数据
             fonts
                 .font_data
                 .insert("CJK".to_owned(), std::sync::Arc::new(font_data));
@@ -111,7 +111,7 @@ fn main() {
     // 按配置决定是否启动热更新监听
     if config.hot_reload {
         #[cfg(windows)]
-    watcher::spawn_watcher(config_path, tx.clone());
+        watcher::spawn_watcher(config_path, tx.clone());
     } else {
         log::info!("hot-reload disabled by config");
     }

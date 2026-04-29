@@ -83,9 +83,7 @@ impl CatimeApp {
     /// 若计时器 Running 且距上次 Tick 满 1 秒，自动发送 Tick 命令。
     fn auto_tick(&mut self) {
         let vs = self.controller.view_state();
-        if vs.status == TimerStatus::Running
-            && self.last_tick.elapsed() >= Duration::from_secs(1)
-        {
+        if vs.status == TimerStatus::Running && self.last_tick.elapsed() >= Duration::from_secs(1) {
             self.controller.handle(AppCommand::Tick);
             self.last_tick = Instant::now();
         }
@@ -171,12 +169,8 @@ impl CatimeApp {
                     };
                     if ui.button(RichText::new(switch_label).size(18.0)).clicked() {
                         let new_mode = match vs.mode {
-                            timer_core::TimerMode::Stopwatch => {
-                                timer_core::TimerMode::Countdown
-                            }
-                            timer_core::TimerMode::Countdown => {
-                                timer_core::TimerMode::Stopwatch
-                            }
+                            timer_core::TimerMode::Stopwatch => timer_core::TimerMode::Countdown,
+                            timer_core::TimerMode::Countdown => timer_core::TimerMode::Stopwatch,
                         };
                         let _ = self.tx.send(AppCommand::SwitchMode(new_mode));
                     }
