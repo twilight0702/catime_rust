@@ -16,7 +16,10 @@ use app::CatimeApp;
 use ui_command::UiCommand;
 
 #[cfg(windows)]
-use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+    SM_YVIRTUALSCREEN,
+};
 
 /// 加载系统中的中文字体
 /// 注册为 egui 的首选字体族，使中文能正常显示。
@@ -80,14 +83,16 @@ fn normalized_window_bounds(
 
     #[cfg(windows)]
     {
-        let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(1) as f32;
-        let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) }.max(1) as f32;
-        let clamped_w = width.min(screen_w);
-        let clamped_h = height.min(screen_h);
-        let max_x = (screen_w - clamped_w).max(0.0);
-        let max_y = (screen_h - clamped_h).max(0.0);
-        let x = (config.window.x as f32).clamp(0.0, max_x);
-        let y = (config.window.y as f32).clamp(0.0, max_y);
+        let virtual_x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) } as f32;
+        let virtual_y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) } as f32;
+        let virtual_w = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) }.max(1) as f32;
+        let virtual_h = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) }.max(1) as f32;
+        let clamped_w = width.min(virtual_w);
+        let clamped_h = height.min(virtual_h);
+        let max_x = virtual_x + (virtual_w - clamped_w).max(0.0);
+        let max_y = virtual_y + (virtual_h - clamped_h).max(0.0);
+        let x = (config.window.x as f32).clamp(virtual_x, max_x);
+        let y = (config.window.y as f32).clamp(virtual_y, max_y);
         return (x, y, clamped_w, clamped_h);
     }
 

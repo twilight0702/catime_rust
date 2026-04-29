@@ -92,6 +92,7 @@ impl CatimeApp {
                         self.controller.view_state().countdown_duration_secs,
                     );
                     ctx.request_repaint();
+                    ctx.request_repaint_after(Duration::from_millis(16));
                 }
             }
         }
@@ -198,43 +199,122 @@ impl CatimeApp {
 
                 ui.add_space(16.0);
 
-                // 按钮行：开始/暂停/继续 | 重置 | 切换模式
-                ui.horizontal(|ui| {
-                    // 主操作按钮：根据状态动态切换文字和命令
-                    let btn_label = match vs.status {
-                        TimerStatus::Running => "暂停",
-                        TimerStatus::Paused => "继续",
-                        _ => "开始",
-                    };
+                let primary_label = match vs.status {
+                    TimerStatus::Running => "暂停",
+                    TimerStatus::Paused => "继续",
+                    _ => "开始",
+                };
+                let primary_cmd = match vs.status {
+                    TimerStatus::Running => AppCommand::Pause,
+                    TimerStatus::Paused => AppCommand::Resume,
+                    _ => AppCommand::Start,
+                };
+                let switch_label = match vs.mode {
+                    timer_core::TimerMode::Stopwatch => "切倒计时",
+                    timer_core::TimerMode::Countdown => "切正计时",
+                };
+                let switch_mode = match vs.mode {
+                    timer_core::TimerMode::Stopwatch => timer_core::TimerMode::Countdown,
+                    timer_core::TimerMode::Countdown => timer_core::TimerMode::Stopwatch,
+                };
 
-                    if ui.button(RichText::new(btn_label).size(18.0)).clicked() {
-                        let cmd = match vs.status {
-                            TimerStatus::Running => AppCommand::Pause,
-                            TimerStatus::Paused => AppCommand::Resume,
-                            _ => AppCommand::Start,
-                        };
-                        let _ = self.tx.send(UiCommand::Core(cmd));
-                    }
+                let available_width = ui.available_width().max(180.0);
+                let button_height = 38.0;
+                let spacing = ui.spacing().item_spacing.x;
+                let wide_layout = available_width >= 360.0;
+                let content_width = available_width.min(460.0);
 
-                    if ui.button(RichText::new("重置").size(18.0)).clicked() {
-                        let _ = self.tx.send(UiCommand::Core(AppCommand::Reset));
-                    }
+                if wide_layout {
+                    let row_width = content_width.min(420.0);
+                    let button_width = ((row_width - spacing * 2.0) / 3.0).clamp(96.0, 132.0);
+                    let exact_row_width = button_width * 3.0 + spacing * 2.0;
+                    let left_pad = ((available_width - exact_row_width) / 2.0).max(0.0);
 
-                    // 模式切换按钮
-                    let switch_label = match vs.mode {
-                        timer_core::TimerMode::Stopwatch => "切倒计时",
-                        timer_core::TimerMode::Countdown => "切正计时",
-                    };
-                    if ui.button(RichText::new(switch_label).size(18.0)).clicked() {
-                        let new_mode = match vs.mode {
-                            timer_core::TimerMode::Stopwatch => timer_core::TimerMode::Countdown,
-                            timer_core::TimerMode::Countdown => timer_core::TimerMode::Stopwatch,
-                        };
-                        let _ = self
-                            .tx
-                            .send(UiCommand::Core(AppCommand::SwitchMode(new_mode)));
-                    }
-                });
+                    ui.horizontal(|ui| {
+                        ui.add_space(left_pad);
+
+                        if ui
+                            .add_sized(
+                                [button_width, button_height],
+                                egui::Button::new(RichText::new(primary_label).size(18.0)),
+                            )
+                            .clicked()
+                        {
+                            let _ = self.tx.send(UiCommand::Core(primary_cmd));
+                        }
+
+                        if ui
+                            .add_sized(
+                                [button_width, button_height],
+                                egui::Button::new(RichText::new("重置").size(18.0)),
+                            )
+                            .clicked()
+                        {
+                            let _ = self.tx.send(UiCommand::Core(AppCommand::Reset));
+                        }
+
+                        if ui
+                            .add_sized(
+                                [button_width, button_height],
+                                egui::Button::new(RichText::new(switch_label).size(18.0)),
+                            )
+                            .clicked()
+                        {
+                            let _ = self
+                                .tx
+                                .send(UiCommand::Core(AppCommand::SwitchMode(switch_mode)));
+                        }
+                    });
+                } else {
+                    let top_row_width = content_width.min(280.0);
+                    let top_button_width = ((top_row_width - spacing) / 2.0).clamp(92.0, 132.0);
+                    let exact_top_row_width = top_button_width * 2.0 + spacing;
+                    let bottom_button_width = content_width.min(180.0).clamp(120.0, 180.0);
+                    let top_left_pad = ((available_width - exact_top_row_width) / 2.0).max(0.0);
+                    let bottom_left_pad = ((available_width - bottom_button_width) / 2.0).max(0.0);
+
+                    ui.horizontal(|ui| {
+                        ui.add_space(top_left_pad);
+
+                        if ui
+                            .add_sized(
+                                [top_button_width, button_height],
+                                egui::Button::new(RichText::new(primary_label).size(18.0)),
+                            )
+                            .clicked()
+                        {
+                            let _ = self.tx.send(UiCommand::Core(primary_cmd));
+                        }
+
+                        if ui
+                            .add_sized(
+                                [top_button_width, button_height],
+                                egui::Button::new(RichText::new("重置").size(18.0)),
+                            )
+                            .clicked()
+                        {
+                            let _ = self.tx.send(UiCommand::Core(AppCommand::Reset));
+                        }
+                    });
+
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        ui.add_space(bottom_left_pad);
+
+                        if ui
+                            .add_sized(
+                                [bottom_button_width, button_height],
+                                egui::Button::new(RichText::new(switch_label).size(18.0)),
+                            )
+                            .clicked()
+                        {
+                            let _ = self
+                                .tx
+                                .send(UiCommand::Core(AppCommand::SwitchMode(switch_mode)));
+                        }
+                    });
+                }
             });
 
             let handle_size = 16.0;
@@ -291,6 +371,9 @@ impl CatimeApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(target_visible));
         if target_visible {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            // Hidden -> visible often needs one more frame before child windows paint.
+            ctx.request_repaint();
+            ctx.request_repaint_after(Duration::from_millis(16));
         }
     }
 
@@ -301,7 +384,9 @@ impl CatimeApp {
 
         let mut open = true;
         egui::Window::new("设置倒计时")
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .collapsible(false)
+            .movable(false)
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
