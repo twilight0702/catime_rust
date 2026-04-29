@@ -21,3 +21,6 @@ image.workspace = true
 timer-core.workspace = true
 timer-storage.workspace = true
 timer-app.workspace = true
+windows = { version = "0.58", features = [
+    "Win32_UI_WindowsAndMessaging",
+] }

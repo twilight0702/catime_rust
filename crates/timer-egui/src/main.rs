@@ -3,6 +3,7 @@
 
 mod app;
 mod tray;
+mod ui_command;
 mod watcher;
 
 use std::sync::mpsc;
@@ -12,6 +13,10 @@ use timer_app::AppController;
 use timer_storage::{ConfigRepository, TomlConfigRepository};
 
 use app::CatimeApp;
+use ui_command::UiCommand;
+
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
 
 /// 加载系统中的中文字体
 /// 注册为 egui 的首选字体族，使中文能正常显示。
@@ -67,6 +72,31 @@ fn setup_cjk_fonts() -> FontDefinitions {
     fonts
 }
 
+fn normalized_window_bounds(
+    config: &timer_storage::AppConfig,
+) -> (f32, f32, f32, f32) {
+    let width = config.window.width.max(320) as f32;
+    let height = config.window.height.max(220) as f32;
+
+    #[cfg(windows)]
+    {
+        let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(1) as f32;
+        let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) }.max(1) as f32;
+        let clamped_w = width.min(screen_w);
+        let clamped_h = height.min(screen_h);
+        let max_x = (screen_w - clamped_w).max(0.0);
+        let max_y = (screen_h - clamped_h).max(0.0);
+        let x = (config.window.x as f32).clamp(0.0, max_x);
+        let y = (config.window.y as f32).clamp(0.0, max_y);
+        return (x, y, clamped_w, clamped_h);
+    }
+
+    #[cfg(not(windows))]
+    {
+        (config.window.x as f32, config.window.y as f32, width, height)
+    }
+}
+
 fn main() {
     // 初始化日志系统
     env_logger::init();
@@ -98,30 +128,24 @@ fn main() {
     };
 
     // 创建命令通道：托盘 / 文件监听器 → egui 主循环
-    let (tx, rx) = mpsc::channel::<timer_core::AppCommand>();
+    let (tx, rx) = mpsc::channel::<UiCommand>();
 
-    // 在主线程创建托盘，与 eframe 共用 Windows 消息泵
-    // Box::leak 确保托盘句柄在程序整个生命周期内有效
-    #[cfg(windows)]
-    let _tray = Box::leak(Box::new(tray::create_tray(
-        tx.clone(),
-        config.tray.show_remaining_tooltip,
-    )));
+    let controller = AppController::new(config.clone(), Box::new(config_repo));
+    let (x, y, width, height) = normalized_window_bounds(&config);
 
-    // 按配置决定是否启动热更新监听
-    if config.hot_reload {
-        #[cfg(windows)]
-        watcher::spawn_watcher(config_path, tx.clone());
-    } else {
-        log::info!("hot-reload disabled by config");
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([width, height])
+        .with_position([x, y])
+        .with_clamp_size_to_monitor_size(true)
+        .with_decorations(false)
+        .with_taskbar(false)
+        .with_title("Catime");
+    if config.always_on_top {
+        viewport = viewport.with_always_on_top();
     }
 
-    let controller = AppController::new(config, Box::new(config_repo));
-
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([300.0, 200.0])
-            .with_title("Catime"),
+        viewport,
         ..Default::default()
     };
 
@@ -133,6 +157,20 @@ fn main() {
         native_options,
         Box::new(move |cc| {
             cc.egui_ctx.set_fonts(fonts.clone());
+            #[cfg(windows)]
+            let _tray = Box::leak(Box::new(tray::create_tray(
+                tx.clone(),
+                cc.egui_ctx.clone(),
+                config.tray.show_remaining_tooltip,
+            )));
+
+            if config.hot_reload {
+                #[cfg(windows)]
+                watcher::spawn_watcher(config_path, tx.clone(), cc.egui_ctx.clone());
+            } else {
+                log::info!("hot-reload disabled by config");
+            }
+
             Ok(Box::new(CatimeApp::new(controller, rx, tx)))
         }),
     ) {

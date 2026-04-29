@@ -1,15 +1,14 @@
-mode = "stopwatch"
-duration_secs = 1010
-always_on_top = false
+mode = "countdown"
+duration_secs = 1500
+always_on_top = true
 opacity = 0.8500000238418579
 hot_reload = true
 
 [window]
-x = 727
-y = -779
-width = 720
-height = 495
-dpi = 96
+x = 1506
+y = 338
+width = 418
+height = 249
 locked = false
 
 [font]

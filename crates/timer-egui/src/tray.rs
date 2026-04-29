@@ -2,10 +2,13 @@
 
 use std::sync::mpsc;
 
+use egui::Context;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
 
 use timer_core::AppCommand;
+
+use crate::ui_command::UiCommand;
 
 /// 从 `assets/icon.ico` 编译期嵌入图标并解码为 RGBA 格式。
 /// 使用 `include_bytes!` 在编译时将图标数据嵌入二进制。
@@ -23,18 +26,32 @@ fn create_icon() -> Icon {
 /// 创建托盘图标并设置事件回调。
 /// 必须在主线程调用以共享 Windows 消息泵。
 /// 返回的 `TrayIcon` 句柄须保持存活（`Box::leak`），否则图标会消失。
-pub fn create_tray(tx: mpsc::Sender<AppCommand>, show_tooltip: bool) -> tray_icon::TrayIcon {
+pub fn create_tray(
+    tx: mpsc::Sender<UiCommand>,
+    repaint_ctx: Context,
+    show_tooltip: bool,
+) -> tray_icon::TrayIcon {
     let icon = create_icon();
 
     // 构建右键菜单
     let menu = Menu::new();
-    menu.append(&MenuItem::new("开始", true, None)).ok();
-    menu.append(&MenuItem::new("暂停", true, None)).ok();
-    menu.append(&MenuItem::new("重置", true, None)).ok();
-    menu.append(&MenuItem::new("正计时", true, None)).ok();
-    menu.append(&MenuItem::new("倒计时", true, None)).ok();
-    menu.append(&MenuItem::new("显示/隐藏", true, None)).ok();
-    menu.append(&MenuItem::new("退出", true, None)).ok();
+    let item_start = MenuItem::new("开始", true, None);
+    let item_pause = MenuItem::new("暂停", true, None);
+    let item_reset = MenuItem::new("重置", true, None);
+    let item_stopwatch = MenuItem::new("正计时", true, None);
+    let item_countdown = MenuItem::new("倒计时", true, None);
+    let item_set_countdown = MenuItem::new("设置倒计时...", true, None);
+    let item_toggle = MenuItem::new("显示/隐藏", true, None);
+    let item_quit = MenuItem::new("退出", true, None);
+
+    menu.append(&item_start).ok();
+    menu.append(&item_pause).ok();
+    menu.append(&item_reset).ok();
+    menu.append(&item_stopwatch).ok();
+    menu.append(&item_countdown).ok();
+    menu.append(&item_set_countdown).ok();
+    menu.append(&item_toggle).ok();
+    menu.append(&item_quit).ok();
 
     let mut builder = TrayIconBuilder::new()
         .with_icon(icon)
@@ -46,30 +63,55 @@ pub fn create_tray(tx: mpsc::Sender<AppCommand>, show_tooltip: bool) -> tray_ico
 
     // 托盘左键/双击 → 由控制器按配置决定行为
     let tx_click = tx.clone();
+    let repaint_click = repaint_ctx.clone();
     TrayIconEvent::set_event_handler(Some(Box::new(move |event: TrayIconEvent| {
         if matches!(
             event,
             TrayIconEvent::Click { .. } | TrayIconEvent::DoubleClick { .. }
         ) {
-            let _ = tx_click.send(AppCommand::TrayLeftClick);
+            let _ = tx_click.send(UiCommand::Core(AppCommand::TrayLeftClick));
+            repaint_click.request_repaint();
         }
     })));
 
     // 右键菜单项 → 对应 AppCommand
     let tx_menu = tx;
+    let repaint_menu = repaint_ctx;
+    let id_start = item_start.id().clone();
+    let id_pause = item_pause.id().clone();
+    let id_reset = item_reset.id().clone();
+    let id_stopwatch = item_stopwatch.id().clone();
+    let id_countdown = item_countdown.id().clone();
+    let id_set_countdown = item_set_countdown.id().clone();
+    let id_toggle = item_toggle.id().clone();
+    let id_quit = item_quit.id().clone();
     MenuEvent::set_event_handler(Some(Box::new(move |event: MenuEvent| {
-        let cmd = match event.id.0.as_str() {
-            "开始" => Some(AppCommand::Start),
-            "暂停" => Some(AppCommand::Pause),
-            "重置" => Some(AppCommand::Reset),
-            "正计时" => Some(AppCommand::SwitchMode(timer_core::TimerMode::Stopwatch)),
-            "倒计时" => Some(AppCommand::SwitchMode(timer_core::TimerMode::Countdown)),
-            "显示/隐藏" => Some(AppCommand::ToggleWindow),
-            "退出" => Some(AppCommand::Quit),
-            _ => None,
+        let cmd = if event.id == id_start {
+            Some(UiCommand::Core(AppCommand::Start))
+        } else if event.id == id_pause {
+            Some(UiCommand::Core(AppCommand::Pause))
+        } else if event.id == id_reset {
+            Some(UiCommand::Core(AppCommand::Reset))
+        } else if event.id == id_stopwatch {
+            Some(UiCommand::Core(AppCommand::SwitchMode(
+                timer_core::TimerMode::Stopwatch,
+            )))
+        } else if event.id == id_countdown {
+            Some(UiCommand::Core(AppCommand::SwitchMode(
+                timer_core::TimerMode::Countdown,
+            )))
+        } else if event.id == id_set_countdown {
+            Some(UiCommand::OpenSetCountdownDialog)
+        } else if event.id == id_toggle {
+            Some(UiCommand::Core(AppCommand::ToggleWindow))
+        } else if event.id == id_quit {
+            Some(UiCommand::Core(AppCommand::Quit))
+        } else {
+            None
         };
         if let Some(cmd) = cmd {
             let _ = tx_menu.send(cmd);
+            repaint_menu.request_repaint();
         }
     })));
 

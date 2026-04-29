@@ -4234,6 +4234,7 @@ dependencies = [
  "timer-core",
  "timer-storage",
  "tray-icon",
+ "windows 0.58.0",
 ]
 
 [[package]]
