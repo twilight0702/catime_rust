@@ -10,6 +10,34 @@ use timer_core::AppCommand;
 
 use crate::ui_command::UiCommand;
 
+#[cfg(windows)]
+use windows::core::w;
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    BringWindowToTop, FindWindowW, SetForegroundWindow, ShowWindow, SW_SHOWNORMAL,
+};
+
+#[cfg(windows)]
+fn wake_native_window() {
+    unsafe {
+        if let Ok(hwnd) = FindWindowW(None, w!("Catime")) {
+            let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+            let _ = BringWindowToTop(hwnd);
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
+}
+
+fn wake_window_for_dialog(ctx: &Context) {
+    #[cfg(windows)]
+    wake_native_window();
+
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    ctx.request_repaint();
+    ctx.request_repaint_after(std::time::Duration::from_millis(16));
+}
+
 /// 从 `assets/icon.ico` 编译期嵌入图标并解码为 RGBA 格式。
 /// 使用 `include_bytes!` 在编译时将图标数据嵌入二进制。
 fn create_icon() -> Icon {
@@ -41,6 +69,7 @@ pub fn create_tray(
     let item_stopwatch = MenuItem::new("正计时", true, None);
     let item_countdown = MenuItem::new("倒计时", true, None);
     let item_set_countdown = MenuItem::new("设置倒计时...", true, None);
+    let item_set_opacity = MenuItem::new("设置透明度...", true, None);
     let item_toggle = MenuItem::new("显示/隐藏", true, None);
     let item_quit = MenuItem::new("退出", true, None);
 
@@ -50,6 +79,7 @@ pub fn create_tray(
     menu.append(&item_stopwatch).ok();
     menu.append(&item_countdown).ok();
     menu.append(&item_set_countdown).ok();
+    menu.append(&item_set_opacity).ok();
     menu.append(&item_toggle).ok();
     menu.append(&item_quit).ok();
 
@@ -83,6 +113,7 @@ pub fn create_tray(
     let id_stopwatch = item_stopwatch.id().clone();
     let id_countdown = item_countdown.id().clone();
     let id_set_countdown = item_set_countdown.id().clone();
+    let id_set_opacity = item_set_opacity.id().clone();
     let id_toggle = item_toggle.id().clone();
     let id_quit = item_quit.id().clone();
     MenuEvent::set_event_handler(Some(Box::new(move |event: MenuEvent| {
@@ -101,7 +132,11 @@ pub fn create_tray(
                 timer_core::TimerMode::Countdown,
             )))
         } else if event.id == id_set_countdown {
+            wake_window_for_dialog(&repaint_menu);
             Some(UiCommand::OpenSetCountdownDialog)
+        } else if event.id == id_set_opacity {
+            wake_window_for_dialog(&repaint_menu);
+            Some(UiCommand::OpenSetOpacityDialog)
         } else if event.id == id_toggle {
             Some(UiCommand::Core(AppCommand::ToggleWindow))
         } else if event.id == id_quit {

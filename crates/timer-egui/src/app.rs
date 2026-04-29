@@ -1,5 +1,5 @@
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use egui::{Align2, Color32, FontId, RichText, Sense, Vec2};
 use timer_app::AppController;
@@ -16,13 +16,17 @@ pub struct CatimeApp {
     rx: Receiver<UiCommand>,
     /// 命令发送端（按钮点击时发送命令给自己）
     tx: Sender<UiCommand>,
-    /// 上次 Tick 时刻，用于 1 秒间隔控制
-    last_tick: Instant,
     show_countdown_dialog: bool,
     countdown_input: String,
     countdown_error: Option<String>,
+    show_opacity_dialog: bool,
+    opacity_input: String,
+    opacity_error: Option<String>,
+    quitting: bool,
+    pending_dialog_repaint_frames: u8,
     requested_hide: bool,
     last_applied_visible: Option<bool>,
+    last_applied_opacity_alpha: Option<u8>,
     last_saved_window: Option<(i32, i32, u32, u32)>,
 }
 
@@ -35,13 +39,18 @@ impl CatimeApp {
         Self {
             countdown_input: String::new(),
             countdown_error: None,
+            show_opacity_dialog: false,
+            opacity_input: String::new(),
+            opacity_error: None,
+            quitting: false,
+            pending_dialog_repaint_frames: 0,
             controller,
             rx,
             tx,
-            last_tick: Instant::now(),
             requested_hide: false,
             show_countdown_dialog: false,
             last_applied_visible: None,
+            last_applied_opacity_alpha: None,
             last_saved_window: None,
         }
     }
@@ -50,18 +59,18 @@ impl CatimeApp {
 impl eframe::App for CatimeApp {
     /// 每帧回调：处理命令 → 自动推进 → 渲染 UI → 请求下一秒重绘。
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if ctx.input(|i| i.viewport().close_requested()) {
+        if !self.quitting && ctx.input(|i| i.viewport().close_requested()) {
             self.handle_core_command(AppCommand::HideWindow, ctx);
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
         self.drain_commands(ctx);
-        self.auto_tick();
         self.apply_visibility(ctx);
+        self.apply_opacity(ctx);
         self.sync_window_bounds(ctx);
         self.render_ui(ctx);
         self.render_countdown_dialog(ctx);
-        // 确保每秒至少重绘一次，驱动 auto_tick
-        ctx.request_repaint_after(Duration::from_secs(1));
+        self.render_opacity_dialog(ctx);
+        self.drive_pending_dialog_repaint(ctx);
     }
 
     /// 退出时保存配置。
@@ -69,6 +78,10 @@ impl eframe::App for CatimeApp {
         if let Err(e) = self.controller.save_config() {
             log::error!("failed to save config: {}", e);
         }
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        Color32::TRANSPARENT.to_normalized_gamma_f32()
     }
 }
 
@@ -85,14 +98,18 @@ impl CatimeApp {
             match cmd {
                 UiCommand::Core(cmd) => self.handle_core_command(cmd, ctx),
                 UiCommand::OpenSetCountdownDialog => {
-                    self.handle_core_command(AppCommand::ShowWindow, ctx);
+                    self.prepare_dialog_open(ctx);
                     self.show_countdown_dialog = true;
                     self.countdown_error = None;
                     self.countdown_input = timer_core::TimerEngine::format_duration(
                         self.controller.view_state().countdown_duration_secs,
                     );
-                    ctx.request_repaint();
-                    ctx.request_repaint_after(Duration::from_millis(16));
+                }
+                UiCommand::OpenSetOpacityDialog => {
+                    self.prepare_dialog_open(ctx);
+                    self.show_opacity_dialog = true;
+                    self.opacity_error = None;
+                    self.opacity_input = format!("{:.2}", self.controller.config().opacity);
                 }
             }
         }
@@ -107,6 +124,7 @@ impl CatimeApp {
         for event in events {
             match event {
                 AppShouldQuit => {
+                    self.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 TimerFinished => {
@@ -120,15 +138,6 @@ impl CatimeApp {
                 }
                 TimerUpdated => {}
             }
-        }
-    }
-
-    /// 若计时器 Running 且距上次 Tick 满 1 秒，自动发送 Tick 命令。
-    fn auto_tick(&mut self) {
-        let vs = self.controller.view_state();
-        if vs.status == TimerStatus::Running && self.last_tick.elapsed() >= Duration::from_secs(1) {
-            self.controller.handle(AppCommand::Tick);
-            self.last_tick = Instant::now();
         }
     }
 
@@ -377,17 +386,62 @@ impl CatimeApp {
         }
     }
 
+    fn prepare_dialog_open(&mut self, ctx: &egui::Context) {
+        self.handle_core_command(AppCommand::ShowWindow, ctx);
+        self.requested_hide = false;
+        self.last_applied_visible = None;
+        self.pending_dialog_repaint_frames = 6;
+
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.request_repaint();
+        ctx.request_repaint_after(Duration::from_millis(16));
+    }
+
+    fn drive_pending_dialog_repaint(&mut self, ctx: &egui::Context) {
+        if self.pending_dialog_repaint_frames == 0 {
+            return;
+        }
+        self.pending_dialog_repaint_frames -= 1;
+        ctx.request_repaint();
+        ctx.request_repaint_after(Duration::from_millis(16));
+    }
+
+    fn apply_opacity(&mut self, ctx: &egui::Context) {
+        let raw_opacity = self.controller.config().opacity;
+        let opacity = if raw_opacity.is_finite() {
+            raw_opacity.clamp(0.05, 1.0)
+        } else {
+            0.85
+        };
+        let alpha = (opacity * 255.0).round() as u8;
+        if self.last_applied_opacity_alpha == Some(alpha) {
+            return;
+        }
+        self.last_applied_opacity_alpha = Some(alpha);
+
+        ctx.send_viewport_cmd(egui::ViewportCommand::Transparent(true));
+
+        let mut style = (*ctx.style()).clone();
+        let bg = Color32::from_rgba_unmultiplied(255, 255, 255, alpha);
+        style.visuals.window_fill = bg;
+        style.visuals.panel_fill = bg;
+        ctx.set_style(style);
+    }
+
     fn render_countdown_dialog(&mut self, ctx: &egui::Context) {
         if !self.show_countdown_dialog {
             return;
         }
 
+        let dialog_frame = egui::Frame::window(&ctx.style()).fill(Color32::WHITE);
         let mut open = true;
         egui::Window::new("设置倒计时")
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .collapsible(false)
             .movable(false)
             .resizable(false)
+            .frame(dialog_frame)
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.label("支持：秒数、MM:SS、HH:MM:SS");
@@ -423,6 +477,58 @@ impl CatimeApp {
         if !open {
             self.show_countdown_dialog = false;
             self.countdown_error = None;
+        }
+    }
+
+    fn render_opacity_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_opacity_dialog {
+            return;
+        }
+
+        let dialog_frame = egui::Frame::window(&ctx.style()).fill(Color32::WHITE);
+        let mut open = true;
+        egui::Window::new("设置透明度")
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .collapsible(false)
+            .movable(false)
+            .resizable(false)
+            .frame(dialog_frame)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label("支持：0.05 ~ 1.00，或 5% ~ 100%");
+                ui.text_edit_singleline(&mut self.opacity_input);
+                if let Some(err) = &self.opacity_error {
+                    ui.colored_label(Color32::RED, err);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("确定").clicked() {
+                        match parse_opacity_input(&self.opacity_input) {
+                            Some(opacity) => {
+                                self.controller.update_opacity(opacity);
+                                if let Err(e) = self.controller.save_config() {
+                                    log::error!("failed to save config after opacity change: {}", e);
+                                }
+                                self.opacity_error = None;
+                                self.show_opacity_dialog = false;
+                                self.apply_opacity(ctx);
+                                ctx.request_repaint();
+                            }
+                            None => {
+                                self.opacity_error =
+                                    Some("请输入有效透明度，例如 0.85 / 85% / 100".into());
+                            }
+                        }
+                    }
+                    if ui.button("取消").clicked() {
+                        self.show_opacity_dialog = false;
+                        self.opacity_error = None;
+                    }
+                });
+            });
+
+        if !open {
+            self.show_opacity_dialog = false;
+            self.opacity_error = None;
         }
     }
 
@@ -484,4 +590,23 @@ fn parse_part(part: &str) -> Option<u64> {
         return None;
     }
     part.parse::<u64>().ok()
+}
+
+fn parse_opacity_input(input: &str) -> Option<f32> {
+    let text = input.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    if let Some(percent) = text.strip_suffix('%') {
+        let value = percent.trim().parse::<f32>().ok()?;
+        return Some((value / 100.0).clamp(0.05, 1.0));
+    }
+
+    let value = text.parse::<f32>().ok()?;
+    if value > 1.0 {
+        Some((value / 100.0).clamp(0.05, 1.0))
+    } else {
+        Some(value.clamp(0.05, 1.0))
+    }
 }

@@ -5,5 +5,5 @@ use timer_core::AppCommand;
 pub enum UiCommand {
     Core(AppCommand),
     OpenSetCountdownDialog,
+    OpenSetOpacityDialog,
 }
-

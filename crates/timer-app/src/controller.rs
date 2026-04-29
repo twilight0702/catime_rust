@@ -163,6 +163,15 @@ impl AppController {
         self.config.window.dpi = dpi;
     }
 
+    /// 更新窗口背景不透明度。
+    pub fn update_opacity(&mut self, opacity: f32) {
+        self.config.opacity = if opacity.is_finite() {
+            opacity.clamp(0.05, 1.0)
+        } else {
+            0.85
+        };
+    }
+
     /// 根据引擎事件同步 ViewState。
     /// 仅在 TimerUpdated / TimerFinished 时刷新，避免不必要的更新。
     fn sync_view_state(&mut self, events: &[AppEvent]) {

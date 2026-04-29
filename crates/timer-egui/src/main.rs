@@ -7,9 +7,11 @@ mod ui_command;
 mod watcher;
 
 use std::sync::mpsc;
+use std::time::Duration;
 
 use egui::{FontData, FontDefinitions, FontFamily};
 use timer_app::AppController;
+use timer_core::AppCommand;
 use timer_storage::{ConfigRepository, TomlConfigRepository};
 
 use app::CatimeApp;
@@ -102,6 +104,21 @@ fn normalized_window_bounds(
     }
 }
 
+fn spawn_tick_thread(tx: mpsc::Sender<UiCommand>, repaint_ctx: egui::Context) {
+    std::thread::Builder::new()
+        .name("egui-ticker".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(1));
+                if tx.send(UiCommand::Core(AppCommand::Tick)).is_err() {
+                    break;
+                }
+                repaint_ctx.request_repaint();
+            }
+        })
+        .expect("failed to spawn egui ticker thread");
+}
+
 fn main() {
     // 初始化日志系统
     env_logger::init();
@@ -142,6 +159,7 @@ fn main() {
         .with_inner_size([width, height])
         .with_position([x, y])
         .with_clamp_size_to_monitor_size(true)
+        .with_transparent(true)
         .with_decorations(false)
         .with_taskbar(false)
         .with_title("Catime");
@@ -162,6 +180,7 @@ fn main() {
         native_options,
         Box::new(move |cc| {
             cc.egui_ctx.set_fonts(fonts.clone());
+            spawn_tick_thread(tx.clone(), cc.egui_ctx.clone());
             #[cfg(windows)]
             let _tray = Box::leak(Box::new(tray::create_tray(
                 tx.clone(),
