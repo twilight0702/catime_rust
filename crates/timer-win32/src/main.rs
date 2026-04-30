@@ -21,7 +21,7 @@ use std::ptr::null_mut;
 use timer_app::AppController;
 use timer_storage::{ConfigRepository, TomlConfigRepository};
 use windows::core::w;
-use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{MonitorFromPoint, HBRUSH, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -34,6 +34,8 @@ use window::{wndproc, AppState};
 
 /// Ctrl+C → 优雅退出 的自定义窗口消息
 pub const WM_CTRLC_SHUTDOWN: u32 = WM_USER + 1;
+pub const WM_OPEN_SET_COUNTDOWN: u32 = WM_USER + 2;
+pub const WM_OPEN_SET_OPACITY: u32 = WM_USER + 3;
 
 const ERROR_LOG_FILE: &str = "catime_error.log";
 
@@ -94,6 +96,28 @@ fn dpi_for_point(x: i32, y: i32) -> u32 {
             dpi_x.max(1)
         } else {
             GetDpiForSystem()
+        }
+    }
+}
+
+pub fn normalized_opacity(opacity: f32) -> f32 {
+    if opacity.is_finite() {
+        opacity.clamp(0.05, 1.0)
+    } else {
+        0.85
+    }
+}
+
+pub fn apply_window_opacity(hwnd: HWND, opacity: f32) {
+    unsafe {
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        if ex_style & WS_EX_LAYERED.0 == 0 {
+            let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, (ex_style | WS_EX_LAYERED.0) as i32);
+        }
+
+        let alpha = (normalized_opacity(opacity) * 255.0).round() as u8;
+        if let Err(e) = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA) {
+            log::error!("apply window opacity failed: {}", e);
         }
     }
 }
@@ -218,6 +242,7 @@ fn main() {
             return;
         }
     };
+    apply_window_opacity(hwnd, state.controller.config().opacity);
 
     // 旧版本过小窗口尺寸（如 300x120）迁移为当前最小可用尺寸并持久化。
     if normalize_window_config {

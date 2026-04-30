@@ -1,11 +1,43 @@
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use egui::{Align2, Color32, FontId, RichText, Sense, Vec2};
 use timer_app::AppController;
 use timer_core::{AppCommand, AppEvent::*, TimerStatus};
 
 use crate::ui_command::UiCommand;
+
+const ERROR_LOG_FILE: &str = "catime_error.log";
+const MIN_WINDOW_WIDTH: u32 = 320;
+const MIN_WINDOW_HEIGHT: u32 = 280;
+
+fn append_error_file(level: &str, msg: &str) {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let path = match std::env::current_exe() {
+        Ok(mut p) => {
+            p.pop();
+            p.push(ERROR_LOG_FILE);
+            p
+        }
+        Err(_) => return,
+    };
+
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = std::io::Write::write_all(
+            &mut f,
+            format!("[{}][{}][app-egui] {}\n", ts, level, msg).as_bytes(),
+        );
+    }
+}
 
 /// egui 应用主结构：持有控制器和命令通道。
 /// 每帧从通道中取出命令处理，渲染 UI，并请求每秒重绘以驱动 Tick。
@@ -96,7 +128,12 @@ impl CatimeApp {
                 Err(TryRecvError::Disconnected) => break,
             };
             match cmd {
-                UiCommand::Core(cmd) => self.handle_core_command(cmd, ctx),
+                UiCommand::Core(cmd) => {
+                    if !matches!(cmd, AppCommand::Tick) {
+                        append_error_file("INFO", &format!("drain command: {:?}", cmd));
+                    }
+                    self.handle_core_command(cmd, ctx)
+                }
                 UiCommand::OpenSetCountdownDialog => {
                     self.prepare_dialog_open(ctx);
                     self.show_countdown_dialog = true;
@@ -124,8 +161,18 @@ impl CatimeApp {
         for event in events {
             match event {
                 AppShouldQuit => {
+                    append_error_file("INFO", "received AppShouldQuit event");
                     self.quitting = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    if let Err(e) = self.controller.save_config() {
+                        log::error!("failed to save config before quit: {}", e);
+                        append_error_file("ERROR", &format!("save config before quit failed: {}", e));
+                    }
+                    // egui 窗口关闭后仍可能有后台线程存活，直接退出进程保证“退出”立即生效。
+                    append_error_file(
+                        "INFO",
+                        &format!("calling std::process::exit(0), pid={}", std::process::id()),
+                    );
+                    std::process::exit(0);
                 }
                 TimerFinished => {
                     self.handle_core_command(AppCommand::ShowWindow, ctx);
@@ -541,6 +588,8 @@ impl CatimeApp {
         let y = outer.min.y.round() as i32;
         let width = (outer.width().round() as i32).max(1) as u32;
         let height = (outer.height().round() as i32).max(1) as u32;
+        let width = width.max(MIN_WINDOW_WIDTH);
+        let height = height.max(MIN_WINDOW_HEIGHT);
         let current = (x, y, width, height);
         if self.last_saved_window == Some(current) {
             return;

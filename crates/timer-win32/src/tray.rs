@@ -2,14 +2,14 @@
 
 use timer_core::AppCommand;
 use windows::core::w;
-use windows::Win32::Foundation::{BOOL, HWND};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, DestroyMenu, GetCursorPos,
-    SetForegroundWindow, TrackPopupMenu, HICON, LR_DEFAULTCOLOR, MF_STRING, TPM_BOTTOMALIGN,
-    TPM_LEFTALIGN, TPM_RETURNCMD,
+    PostMessageW, SetForegroundWindow, TrackPopupMenu, HICON, LR_DEFAULTCOLOR, MF_STRING,
+    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD, WM_NULL,
 };
 
 /// 托盘回调消息 ID（通过 WM_APP + 1 避免冲突）
@@ -24,6 +24,7 @@ pub const MENU_COUNTDOWN: usize = 1005;
 pub const MENU_TOGGLE: usize = 1006;
 pub const MENU_QUIT: usize = 1007;
 pub const MENU_SET_COUNTDOWN: usize = 1008;
+pub const MENU_SET_OPACITY: usize = 1009;
 
 /// 从编译期嵌入的 `assets/icon.ico` 创建托盘图标句柄。
 /// 解析 ICO 文件格式，选取最大尺寸的图标条目。
@@ -127,6 +128,7 @@ pub fn show_tray_menu(hwnd: HWND) -> Option<usize> {
         AppendMenuW(menu, MF_STRING, MENU_STOPWATCH, w!("正计时"));
         AppendMenuW(menu, MF_STRING, MENU_COUNTDOWN, w!("倒计时"));
         AppendMenuW(menu, MF_STRING, MENU_SET_COUNTDOWN, w!("设置倒计时..."));
+        AppendMenuW(menu, MF_STRING, MENU_SET_OPACITY, w!("设置透明度..."));
         AppendMenuW(menu, MF_STRING, MENU_TOGGLE, w!("显示/隐藏"));
         AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("退出"));
 
@@ -143,6 +145,10 @@ pub fn show_tray_menu(hwnd: HWND) -> Option<usize> {
             hwnd,
             None,
         );
+
+        // 按 Win32 托盘菜单惯例补一条空消息，让菜单状态立刻完整收尾。
+        // 否则后续弹窗可能要等到下一次鼠标消息才真正显示/激活。
+        let _ = PostMessageW(hwnd, WM_NULL, WPARAM(0), LPARAM(0));
 
         let _ = DestroyMenu(menu);
         (cmd.0 != 0).then_some(cmd.0 as usize)

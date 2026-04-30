@@ -1,6 +1,7 @@
 //! 系统托盘图标模块：托盘右键菜单 + 左键点击事件。
 
 use std::sync::mpsc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use egui::Context;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
@@ -9,6 +10,35 @@ use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
 use timer_core::AppCommand;
 
 use crate::ui_command::UiCommand;
+
+const ERROR_LOG_FILE: &str = "catime_error.log";
+
+fn append_error_file(level: &str, msg: &str) {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let path = match std::env::current_exe() {
+        Ok(mut p) => {
+            p.pop();
+            p.push(ERROR_LOG_FILE);
+            p
+        }
+        Err(_) => return,
+    };
+
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = std::io::Write::write_all(
+            &mut f,
+            format!("[{}][{}][tray-egui] {}\n", ts, level, msg).as_bytes(),
+        );
+    }
+}
 
 #[cfg(windows)]
 use windows::core::w;
@@ -117,6 +147,7 @@ pub fn create_tray(
     let id_toggle = item_toggle.id().clone();
     let id_quit = item_quit.id().clone();
     MenuEvent::set_event_handler(Some(Box::new(move |event: MenuEvent| {
+        append_error_file("INFO", &format!("menu clicked id={:?}", event.id));
         let cmd = if event.id == id_start {
             Some(UiCommand::Core(AppCommand::Start))
         } else if event.id == id_pause {
@@ -140,11 +171,13 @@ pub fn create_tray(
         } else if event.id == id_toggle {
             Some(UiCommand::Core(AppCommand::ToggleWindow))
         } else if event.id == id_quit {
+            append_error_file("INFO", "menu matched: quit");
             Some(UiCommand::Core(AppCommand::Quit))
         } else {
             None
         };
         if let Some(cmd) = cmd {
+            append_error_file("INFO", &format!("sending ui command: {:?}", cmd));
             let _ = tx_menu.send(cmd);
             repaint_menu.request_repaint();
         }

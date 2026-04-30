@@ -12,9 +12,10 @@ use windows::core::{w, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, InvalidateRect, SetBkMode, SetTextColor,
-    HBRUSH, PAINTSTRUCT, TRANSPARENT,
+    UpdateWindow, HBRUSH, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::render::{self, RenderContext};
@@ -43,10 +44,24 @@ struct DialogState {
     error_text: Option<String>,
     /// 初始倒计时秒数（用于预填输入框）
     initial_secs: u64,
-    /// 返回结果：Some(秒数) 或 None（取消）
-    result: Arc<Mutex<Option<u64>>>,
+    /// 输入对话框类型
+    kind: DialogKind,
+    /// 返回结果
+    result: Arc<Mutex<Option<DialogResult>>>,
     /// 对话框是否已关闭
     done: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Copy)]
+enum DialogKind {
+    Countdown,
+    Opacity,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DialogResult {
+    Countdown(u64),
+    Opacity(f32),
 }
 
 const CLASS_NAME: PCWSTR = w!("CATIME_SET_COUNTDOWN_DIALOG");
@@ -96,13 +111,44 @@ pub fn prompt_countdown_seconds(
     current_secs: u64,
     anchor: Option<(i32, i32)>,
 ) -> Option<u64> {
+    prompt_dialog(
+        parent,
+        current_secs,
+        anchor,
+        DialogKind::Countdown,
+        "设置倒计时",
+    )
+    .and_then(|result| match result {
+        DialogResult::Countdown(secs) => Some(secs),
+        DialogResult::Opacity(_) => None,
+    })
+}
+
+/// 弹出透明度设置对话框，返回 0.05 ~ 1.0 的不透明度值。
+pub fn prompt_opacity(parent: HWND, current: f32, anchor: Option<(i32, i32)>) -> Option<f32> {
+    let initial = (current.clamp(0.05, 1.0) * 100.0).round() as u64;
+    prompt_dialog(parent, initial, anchor, DialogKind::Opacity, "设置透明度").and_then(
+        |result| match result {
+            DialogResult::Opacity(opacity) => Some(opacity),
+            DialogResult::Countdown(_) => None,
+        },
+    )
+}
+
+fn prompt_dialog(
+    parent: HWND,
+    initial_value: u64,
+    anchor: Option<(i32, i32)>,
+    kind: DialogKind,
+    window_title: &str,
+) -> Option<DialogResult> {
     static REGISTER_ONCE: Once = Once::new();
 
     unsafe {
         log_warn(&format!(
             "prompt_countdown_seconds: enter parent_null={} current={}",
             parent.0.is_null(),
-            current_secs
+            initial_value
         ));
         let instance = GetModuleHandleW(None).ok()?;
 
@@ -150,17 +196,19 @@ pub fn prompt_countdown_seconds(
             edit_brush: HBRUSH(null_mut()),
             render,
             error_text: None,
-            initial_secs: current_secs,
+            initial_secs: initial_value,
+            kind,
             result: Arc::clone(&result),
             done: Arc::clone(&done),
         });
         let state_ptr = Box::into_raw(state);
+        let title = HSTRING::from(window_title);
 
         // 创建对话框窗口
         let hwnd = match CreateWindowExW(
             WS_EX_DLGMODALFRAME,
             CLASS_NAME,
-            w!("设置倒计时"),
+            PCWSTR(title.as_ptr()),
             WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE,
             x,
             y,
@@ -180,8 +228,26 @@ pub fn prompt_countdown_seconds(
         };
         log_warn("prompt_countdown_seconds: dialog window created");
 
+        // 强制完成首帧显示与激活，避免窗口要等下一次鼠标消息才真正出现。
+        let _ = InvalidateRect(hwnd, None, true);
+        let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
+        let _ = BringWindowToTop(hwnd);
         let _ = SetForegroundWindow(hwnd);
-        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = SetActiveWindow(hwnd);
+        let _ = UpdateWindow(hwnd);
+        let edit = (*(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DialogState)).edit;
+        if !edit.0.is_null() {
+            let _ = SetFocus(edit);
+        }
         log_warn("prompt_countdown_seconds: entering message loop");
 
         // 独立消息循环：阻塞调用线程直到对话框关闭
@@ -279,12 +345,19 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             let subtitle_h = layout.subtitle.bottom - layout.subtitle.top;
             let hint_h = layout.hint.bottom - layout.hint.top;
             let error_h = layout.error.bottom - layout.error.top;
+            let (title_text, subtitle_text, hint_text) = match (*state_ptr).kind {
+                DialogKind::Countdown => ("设置倒计时", "支持：秒数、MM:SS、HH:MM:SS", "例如：1500、25:00、01:25:00"),
+                DialogKind::Opacity => ("设置透明度", "支持：0.05 ~ 1.00，或 5% ~ 100%", "例如：0.85、85%、100"),
+            };
+            let title_text = HSTRING::from(title_text);
+            let subtitle_text = HSTRING::from(subtitle_text);
+            let hint_text = HSTRING::from(hint_text);
 
             // 标题（STATIC 控件）
             let _title = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
-                w!("设置倒计时"),
+                PCWSTR(title_text.as_ptr()),
                 WS_CHILD | WS_VISIBLE,
                 layout.title.left,
                 layout.title.top,
@@ -300,7 +373,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             let _subtitle = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
-                w!("支持：秒数、MM:SS、HH:MM:SS"),
+                PCWSTR(subtitle_text.as_ptr()),
                 WS_CHILD | WS_VISIBLE,
                 layout.subtitle.left,
                 layout.subtitle.top,
@@ -334,7 +407,7 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             let _hint = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
-                w!("例如：1500、25:00、01:25:00"),
+                PCWSTR(hint_text.as_ptr()),
                 WS_CHILD | WS_VISIBLE,
                 layout.hint.left,
                 layout.hint.top,
@@ -408,7 +481,12 @@ unsafe fn dialog_wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 (*state_ptr).cancel_btn = cancel_btn;
 
                 // 预填当前倒计时时长
-                let initial = timer_core::TimerEngine::format_duration((*state_ptr).initial_secs);
+                let initial = match (*state_ptr).kind {
+                    DialogKind::Countdown => {
+                        timer_core::TimerEngine::format_duration((*state_ptr).initial_secs)
+                    }
+                    DialogKind::Opacity => format!("{}%", (*state_ptr).initial_secs),
+                };
                 set_window_text(edit, &initial);
 
                 // 统一设置所有子控件字体
@@ -664,25 +742,33 @@ unsafe fn submit_dialog(hwnd: HWND, state_ptr: *mut DialogState) {
     }
 
     let text = get_window_text((*state_ptr).edit);
-    match parse_duration_to_secs(&text) {
-        Some(secs) if secs > 0 => {
-            if let Ok(mut out) = (*state_ptr).result.lock() {
-                *out = Some(secs);
-            }
-            (*state_ptr).done.store(true, Ordering::Release);
-            let _ = DestroyWindow(hwnd);
+    let parsed = match (*state_ptr).kind {
+        DialogKind::Countdown => parse_duration_to_secs(&text)
+            .filter(|secs| *secs > 0)
+            .map(DialogResult::Countdown),
+        DialogKind::Opacity => parse_opacity_input(&text).map(DialogResult::Opacity),
+    };
+
+    if let Some(result) = parsed {
+        if let Ok(mut out) = (*state_ptr).result.lock() {
+            *out = Some(result);
         }
-        _ => {
-            log_warn(&format!("invalid countdown input: {}", text));
-            let msg = "请输入有效时长（例如 1500 / 25:00 / 01:25:00）".to_string();
-            (*state_ptr).error_text = Some(msg.clone());
-            if !(*state_ptr).err_label.0.is_null() {
-                set_window_text((*state_ptr).err_label, &msg);
-                let _ = ShowWindow((*state_ptr).err_label, SW_SHOW);
-            }
-            InvalidateRect(hwnd, None, false).ok();
-        }
+        (*state_ptr).done.store(true, Ordering::Release);
+        let _ = DestroyWindow(hwnd);
+        return;
     }
+
+    let msg = match (*state_ptr).kind {
+        DialogKind::Countdown => "请输入有效时长（例如 1500 / 25:00 / 01:25:00）",
+        DialogKind::Opacity => "请输入有效透明度，例如 0.85 / 85% / 100",
+    }
+    .to_string();
+    (*state_ptr).error_text = Some(msg.clone());
+    if !(*state_ptr).err_label.0.is_null() {
+        set_window_text((*state_ptr).err_label, &msg);
+        let _ = ShowWindow((*state_ptr).err_label, SW_SHOW);
+    }
+    InvalidateRect(hwnd, None, false).ok();
 }
 
 /// 设置窗口/控件文本（UTF-16）。
@@ -755,9 +841,28 @@ fn parse_part(part: &str) -> Option<u64> {
     part.parse::<u64>().ok()
 }
 
+fn parse_opacity_input(input: &str) -> Option<f32> {
+    let text = input.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    if let Some(percent) = text.strip_suffix('%') {
+        let value = percent.trim().parse::<f32>().ok()?;
+        return Some((value / 100.0).clamp(0.05, 1.0));
+    }
+
+    let value = text.parse::<f32>().ok()?;
+    if value > 1.0 {
+        Some((value / 100.0).clamp(0.05, 1.0))
+    } else {
+        Some(value.clamp(0.05, 1.0))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_duration_to_secs;
+    use super::{parse_duration_to_secs, parse_opacity_input};
 
     #[test]
     fn parses_plain_seconds() {
@@ -781,5 +886,12 @@ mod tests {
         assert_eq!(parse_duration_to_secs("abc"), None);
         assert_eq!(parse_duration_to_secs("12:70"), None); // 秒 >= 60
         assert_eq!(parse_duration_to_secs("1:70:00"), None); // 分 >= 60
+    }
+
+    #[test]
+    fn parses_opacity_input() {
+        assert_eq!(parse_opacity_input("0.85"), Some(0.85));
+        assert_eq!(parse_opacity_input("85%"), Some(0.85));
+        assert_eq!(parse_opacity_input("100"), Some(1.0));
     }
 }

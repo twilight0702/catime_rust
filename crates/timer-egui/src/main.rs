@@ -1,3 +1,6 @@
+// 仅在 Windows release 构建隐藏控制台窗口；其他平台不受影响。
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 //! Catime egui 前端入口。
 //! 使用 egui/eframe 渲染跨平台 GUI，通过 mpsc 通道与托盘和文件监听器通信。
 
@@ -8,6 +11,7 @@ mod watcher;
 
 use std::sync::mpsc;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use egui::{FontData, FontDefinitions, FontFamily};
 use timer_app::AppController;
@@ -16,6 +20,37 @@ use timer_storage::{ConfigRepository, TomlConfigRepository};
 
 use app::CatimeApp;
 use ui_command::UiCommand;
+
+const ERROR_LOG_FILE: &str = "catime_error.log";
+const MIN_WINDOW_WIDTH: f32 = 320.0;
+const MIN_WINDOW_HEIGHT: f32 = 280.0;
+
+fn append_error_file(level: &str, msg: &str) {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let path = match std::env::current_exe() {
+        Ok(mut p) => {
+            p.pop();
+            p.push(ERROR_LOG_FILE);
+            p
+        }
+        Err(_) => return,
+    };
+
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = std::io::Write::write_all(
+            &mut f,
+            format!("[{}][{}][main-egui] {}\n", ts, level, msg).as_bytes(),
+        );
+    }
+}
 
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -80,8 +115,8 @@ fn setup_cjk_fonts() -> FontDefinitions {
 fn normalized_window_bounds(
     config: &timer_storage::AppConfig,
 ) -> (f32, f32, f32, f32) {
-    let width = config.window.width.max(320) as f32;
-    let height = config.window.height.max(220) as f32;
+    let width = (config.window.width as f32).max(MIN_WINDOW_WIDTH);
+    let height = (config.window.height as f32).max(MIN_WINDOW_HEIGHT);
 
     #[cfg(windows)]
     {
@@ -120,6 +155,12 @@ fn spawn_tick_thread(tx: mpsc::Sender<UiCommand>, repaint_ctx: egui::Context) {
 }
 
 fn main() {
+    let pid = std::process::id();
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string());
+    append_error_file("INFO", &format!("process start pid={} exe={}", pid, exe));
+
     // 初始化日志系统
     env_logger::init();
 
@@ -157,6 +198,7 @@ fn main() {
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([width, height])
+        .with_min_inner_size([MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT])
         .with_position([x, y])
         .with_clamp_size_to_monitor_size(true)
         .with_transparent(true)

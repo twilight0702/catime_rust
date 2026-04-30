@@ -188,7 +188,19 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 WM_RBUTTONUP => {
                     if let Some(menu_id) = tray::show_tray_menu(hwnd) {
                         if menu_id == tray::MENU_SET_COUNTDOWN {
-                            apply_countdown_setting(hwnd);
+                            let _ = PostMessageW(
+                                hwnd,
+                                crate::WM_OPEN_SET_COUNTDOWN,
+                                WPARAM(0),
+                                LPARAM(0),
+                            );
+                        } else if menu_id == tray::MENU_SET_OPACITY {
+                            let _ = PostMessageW(
+                                hwnd,
+                                crate::WM_OPEN_SET_OPACITY,
+                                WPARAM(0),
+                                LPARAM(0),
+                            );
                         } else if let Some(cmd) = tray::menu_id_to_command(menu_id) {
                             let Some(state) = try_get_state(hwnd) else {
                                 return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -208,8 +220,9 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
         WM_COMMAND => {
             let menu_id = wparam.0 as usize;
             if menu_id == tray::MENU_SET_COUNTDOWN {
-                apply_countdown_setting(hwnd);
-                InvalidateRect(hwnd, None, false).ok();
+                let _ = PostMessageW(hwnd, crate::WM_OPEN_SET_COUNTDOWN, WPARAM(0), LPARAM(0));
+            } else if menu_id == tray::MENU_SET_OPACITY {
+                let _ = PostMessageW(hwnd, crate::WM_OPEN_SET_OPACITY, WPARAM(0), LPARAM(0));
             } else if let Some(cmd) = tray::menu_id_to_command(menu_id) {
                 let Some(state) = try_get_state(hwnd) else {
                     return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -218,6 +231,18 @@ unsafe fn wndproc_impl(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 process_events(hwnd, state, &events);
                 InvalidateRect(hwnd, None, false).ok();
             }
+            LRESULT(0)
+        }
+
+        msg if msg == crate::WM_OPEN_SET_COUNTDOWN => {
+            apply_countdown_setting(hwnd);
+            InvalidateRect(hwnd, None, false).ok();
+            LRESULT(0)
+        }
+
+        msg if msg == crate::WM_OPEN_SET_OPACITY => {
+            apply_opacity_setting(hwnd);
+            InvalidateRect(hwnd, None, false).ok();
             LRESULT(0)
         }
 
@@ -310,7 +335,11 @@ fn drain_commands(hwnd: HWND, state: &mut AppState) {
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => break,
         };
+        let is_reload = matches!(&cmd, AppCommand::ReloadConfig);
         let events = state.controller.handle(cmd);
+        if is_reload {
+            crate::apply_window_opacity(hwnd, state.controller.config().opacity);
+        }
         process_events(hwnd, state, &events);
     }
 }
@@ -351,7 +380,9 @@ fn process_events(hwnd: HWND, state: &mut AppState, events: &[AppEvent]) {
                 if let Err(e) = state.controller.save_config() {
                     log::error!("save config before quit: {}", e);
                 }
-                unsafe { PostQuitMessage(0) };
+                unsafe {
+                    let _ = DestroyWindow(hwnd);
+                }
                 return;
             }
             AppEvent::TimerFinished => {
@@ -434,5 +465,46 @@ fn apply_countdown_setting(hwnd: HWND) {
         }
     } else {
         append_error_file("INFO", "apply_countdown_setting: dialog canceled or failed");
+    }
+}
+
+/// 弹出透明度设置对话框，将结果即时应用并落盘。
+fn apply_opacity_setting(hwnd: HWND) {
+    let (current, owner) = {
+        let Some(state) = try_get_state(hwnd) else {
+            return;
+        };
+        let current = state.controller.config().opacity;
+        let owner = unsafe {
+            if IsWindowVisible(hwnd).as_bool() {
+                hwnd
+            } else {
+                HWND(std::ptr::null_mut())
+            }
+        };
+        (current, owner)
+    };
+
+    let mut cursor = POINT::default();
+    let anchor = unsafe {
+        if GetCursorPos(&mut cursor).is_ok() {
+            Some((cursor.x, cursor.y))
+        } else {
+            None
+        }
+    };
+
+    if let Some(opacity) = countdown_dialog::prompt_opacity(owner, current, anchor) {
+        let Some(state) = try_get_state(hwnd) else {
+            return;
+        };
+        state.controller.update_opacity(opacity);
+        if let Err(e) = state.controller.save_config() {
+            log::error!("save config after set opacity failed: {}", e);
+        }
+        crate::apply_window_opacity(hwnd, state.controller.config().opacity);
+        unsafe {
+            InvalidateRect(hwnd, None, false).ok();
+        }
     }
 }
